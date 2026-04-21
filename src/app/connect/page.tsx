@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Smartphone, Wifi, Globe, Copy, Check } from 'lucide-react'
+import { Smartphone, Wifi, Globe, Copy, Check, ShieldCheck } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 
@@ -11,17 +11,15 @@ export default function ConnectPage() {
   const [qrDataUrl, setQrDataUrl] = useState('')
 
   useEffect(() => {
-    // Grab the current host (works whether on LAN or Tailscale)
-    const url = `${window.location.protocol}//${window.location.hostname}:${window.location.port || 3000}`
-    setLocalUrl(url)
-    generateQr(url)
+    fetch('/api/local-ip')
+      .then(r => r.json())
+      .then(({ ip }) => {
+        const url = `http://${ip}:3000`
+        setLocalUrl(url)
+        const encoded = encodeURIComponent(url)
+        setQrDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=0a0a0f&color=a78bfa&margin=2`)
+      })
   }, [])
-
-  async function generateQr(text: string) {
-    // Use a public QR API — no data leaves (URL is just the local IP)
-    const encoded = encodeURIComponent(text)
-    setQrDataUrl(`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=0a0a0f&color=a78bfa&margin=2`)
-  }
 
   const copy = async () => {
     await navigator.clipboard.writeText(localUrl)
@@ -37,28 +35,48 @@ export default function ConnectPage() {
 
       <div className="flex flex-col gap-6 p-6 max-w-2xl mx-auto w-full">
 
-        {/* QR card */}
+        {/* Step 1 — Firewall */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              Step 1 — Allow Hearth through Windows Firewall
+            </CardTitle>
+            <CardDescription>
+              Only needed once. Run this in an admin PowerShell on your PC.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <code className="block rounded-lg border border-border bg-muted px-4 py-3 text-xs font-mono break-all">
+              New-NetFirewallRule -DisplayName &quot;Hearth&quot; -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow
+            </code>
+          </CardContent>
+        </Card>
+
+        {/* Step 2 — QR */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm flex items-center gap-2">
               <Wifi className="h-4 w-4 text-primary" />
-              Home Wi-Fi
+              Step 2 — Scan on your phone
             </CardTitle>
             <CardDescription>
               Make sure your phone is on the same Wi-Fi as this computer, then scan.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4">
-            {qrDataUrl && (
+            {qrDataUrl ? (
               <div className="rounded-xl overflow-hidden border border-border p-2 bg-[#0a0a0f]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={qrDataUrl} alt="QR code" width={200} height={200} />
               </div>
+            ) : (
+              <div className="w-[200px] h-[200px] rounded-xl border border-border bg-muted animate-pulse" />
             )}
 
             <div className="flex items-center gap-2 w-full max-w-sm">
               <code className="flex-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm font-mono truncate">
-                {localUrl || 'Detecting...'}
+                {localUrl || 'Detecting…'}
               </code>
               <button
                 onClick={copy}
@@ -104,9 +122,7 @@ export default function ConnectPage() {
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">3</span>
-                <span className="text-muted-foreground">
-                  Sign in to the same account on both devices
-                </span>
+                <span className="text-muted-foreground">Sign in to the same account on both devices</span>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">4</span>
@@ -116,7 +132,6 @@ export default function ConnectPage() {
                 </span>
               </li>
             </ol>
-
             <div className="rounded-lg border border-border bg-muted/30 p-3">
               <p className="text-xs text-muted-foreground">
                 Tailscale creates an encrypted tunnel between your devices. Your AI traffic never goes through any public server — not even Tailscale's.
