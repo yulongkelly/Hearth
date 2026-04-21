@@ -1,0 +1,104 @@
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Cpu,
+  Mail,
+  CalendarDays,
+  Settings,
+  Brain,
+  Smartphone,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+
+const navItems = [
+  { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/chat', icon: MessageSquare, label: 'Chat' },
+  { href: '/models', icon: Cpu, label: 'Models' },
+  { href: '/gmail', icon: Mail, label: 'Gmail', comingSoon: true },
+  { href: '/calendar', icon: CalendarDays, label: 'Calendar', comingSoon: true },
+]
+
+const bottomItems = [
+  { href: '/connect',  icon: Smartphone, label: 'Connect Phone' },
+  { href: '/settings', icon: Settings,   label: 'Settings' },
+]
+
+export function Sidebar() {
+  const pathname = usePathname()
+
+  return (
+    <TooltipProvider delayDuration={0}>
+      <aside className="fixed left-0 top-0 z-40 hidden md:flex h-full w-16 flex-col border-r border-border bg-card">
+        {/* Logo */}
+        <div className="flex h-16 items-center justify-center border-b border-border">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/20">
+            <Brain className="h-5 w-5 text-primary" />
+          </div>
+        </div>
+
+        {/* Main nav */}
+        <nav className="flex flex-1 flex-col items-center gap-1 py-4">
+          {navItems.map(({ href, icon: Icon, label, comingSoon }) => {
+            const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
+            return (
+              <Tooltip key={href}>
+                <TooltipTrigger asChild>
+                  <Link
+                    href={comingSoon ? '#' : href}
+                    className={cn(
+                      'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                      isActive
+                        ? 'bg-primary/20 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                      comingSoon && 'cursor-not-allowed opacity-40'
+                    )}
+                    aria-label={label}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="flex items-center gap-2">
+                  {label}
+                  {comingSoon && (
+                    <span className="text-[10px] text-muted-foreground">(coming soon)</span>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </nav>
+
+        {/* Bottom nav */}
+        <div className="flex flex-col items-center gap-1 border-t border-border py-4">
+          {bottomItems.map(({ href, icon: Icon, label }) => {
+            const isActive = pathname === href
+            return (
+              <Tooltip key={href}>
+                <TooltipTrigger asChild>
+                  <Link
+                    href={href}
+                    className={cn(
+                      'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                      isActive
+                        ? 'bg-primary/20 text-primary'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    )}
+                    aria-label={label}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right">{label}</TooltipContent>
+              </Tooltip>
+            )
+          })}
+        </div>
+      </aside>
+    </TooltipProvider>
+  )
+}
