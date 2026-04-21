@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hearth — Your Private AI Assistant</title>
+  <meta name="description" content="A local AI personal assistant that integrates your email and calendar. All data stays on your computer. Free and open source." />
+  <script src="config.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    body { background: #07070f; }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 50%, #6366f1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-glow {
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(124, 58, 237, 0.25) 0%, transparent 70%);
+    }
+
+    .card-glow:hover {
+      box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.3), 0 8px 40px rgba(124, 58, 237, 0.1);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #6366f1);
+      transition: all 0.2s;
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #6d28d9, #4f46e5);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 30px rgba(124, 58, 237, 0.4);
+    }
+    .btn-primary:active { transform: translateY(0); }
+
+    .nav-blur {
+      background: rgba(7, 7, 15, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .feature-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      transition: all 0.2s;
+    }
+    .feature-card:hover {
+      background: rgba(124, 58, 237, 0.06);
+      border-color: rgba(124, 58, 237, 0.2);
+    }
+
+    .platform-btn {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      transition: all 0.2s;
+    }
+    .platform-btn:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    .mockup-shadow {
+      box-shadow: 0 40px 120px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.06);
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-8px); }
+    }
+    .float { animation: float 4s ease-in-out infinite; }
+  </style>
+</head>
+<body class="text-white min-h-screen overflow-x-hidden">
+
+  <!-- Nav -->
+  <nav class="nav-blur fixed top-0 left-0 right-0 z-50 border-b border-white/5">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <!-- Logo icon -->
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg,#7c3aed,#6366f1)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 0 1 7-7z"/>
+            <path d="M9 17h6"/><path d="M10 21h4"/>
+          </svg>
+        </div>
+        <span class="font-bold text-lg tracking-tight">Hearth</span>
+      </div>
+
+      <div class="hidden md:flex items-center gap-8">
+        <a href="#features" class="text-sm text-white/60 hover:text-white transition-colors">Features</a>
+        <a href="#privacy" class="text-sm text-white/60 hover:text-white transition-colors">Privacy</a>
+        <a href="#download" class="text-sm text-white/60 hover:text-white transition-colors">Download</a>
+        <a id="navGithub" href="#" target="_blank" class="text-sm text-white/60 hover:text-white transition-colors flex items-center gap-1.5">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub
+        </a>
+      </div>
+
+      <a href="#download" class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold text-white">
+        Download
+      </a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero-glow pt-32 pb-20 px-6 text-center relative">
+    <div class="max-w-4xl mx-auto">
+
+      <!-- Badge -->
+      <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 mb-8">
+        <div class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
+        <span class="text-xs font-medium text-violet-300">Open Source · Free Forever · v0.1.0</span>
+      </div>
+
+      <h1 class="text-5xl md:text-7xl font-black tracking-tight leading-none mb-6">
+        Your AI assistant.<br/>
+        <span class="gradient-text">Stays on your machine.</span>
+      </h1>
+
+      <p class="text-lg md:text-xl text-white/50 max-w-2xl mx-auto mb-10 leading-relaxed">
+        Hearth connects your email and calendar to a local AI model.
+        No cloud. No subscriptions. No one else reads your data.
+        Just install and go.
+      </p>
+
+      <!-- Download buttons -->
+      <div id="download" class="flex flex-col sm:flex-row items-center justify-center gap-3 mb-5">
+        <button id="primaryDownload" onclick="downloadApp()" class="btn-primary flex items-center gap-3 px-7 py-4 rounded-xl text-base font-bold text-white w-full sm:w-auto">
+          <span id="primaryIcon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </span>
+          <span id="primaryLabel">Download for Windows</span>
+        </button>
+      </div>
+
+      <!-- Other platforms -->
+      <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
+        <a href="#" onclick="return downloadPlatform('mac')" class="platform-btn flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-white/70 hover:text-white">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          macOS
+        </a>
+        <a href="#" onclick="return downloadPlatform('linux')" class="platform-btn flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-white/70 hover:text-white">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.247 2.048.Machine 2.048 2.65 0 .55-.344 1.08-.773 1.488.695.167 1.492.267 2.473.267 1.478 0 3.927-.744 5.007-1.01.833-.21 1.336-.15 1.81.047.47.19.945.51 1.663.842.755.36 1.595.57 2.4.57 1.325 0 2.545-.51 3.51-1.327.143.03.287.05.434.05 1.99 0 3.2-1.977 3.2-3.65 0-1.128-.565-2.055-1.386-2.69-.2-.147-.407-.278-.623-.39.152-1.183.06-2.518-.42-3.74-.9-2.312-2.57-4.132-4.044-5.218-.48-.35-.987-.617-1.504-.8-.32-.115-.65-.19-.98-.218-.06 0-.12-.005-.18-.005z"/></svg>
+          Linux
+        </a>
+      </div>
+
+      <p class="text-xs text-white/30">Free · Open Source · MIT License</p>
+    </div>
+
+    <!-- App mockup -->
+    <div class="max-w-5xl mx-auto mt-16 px-4 float">
+      <div class="mockup-shadow rounded-2xl overflow-hidden border border-white/10">
+        <!-- Fake titlebar -->
+        <div class="flex items-center gap-2 px-4 py-3 bg-[#0f0f1a] border-b border-white/5">
+          <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
+          <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
+          <div class="w-3 h-3 rounded-full bg-green-500/70"></div>
+          <span class="ml-3 text-xs text-white/30 font-medium">Hearth</span>
+        </div>
+        <!-- App UI mockup -->
+        <div class="bg-[#0a0a0f] flex" style="height: 420px">
+          <!-- Sidebar -->
+          <div class="w-14 bg-[#0d0d18] border-r border-white/5 flex flex-col items-center py-4 gap-3">
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#7c3aed22,#6366f122)">
+              <div class="w-5 h-5 rounded bg-violet-500/50"></div>
+            </div>
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center bg-violet-500/20">
+              <div class="w-4 h-4 rounded bg-violet-400/70"></div>
+            </div>
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center">
+              <div class="w-4 h-4 rounded bg-white/20"></div>
+            </div>
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center">
+              <div class="w-4 h-4 rounded bg-white/10"></div>
+            </div>
+          </div>
+          <!-- Conversation list -->
+          <div class="w-56 border-r border-white/5 flex flex-col" style="background:#0c0c17">
+            <div class="px-3 py-3 border-b border-white/5 text-xs font-medium text-white/40">Conversations</div>
+            <div class="flex flex-col gap-1 p-2">
+              <div class="px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20">
+                <div class="h-2.5 w-32 rounded bg-violet-300/30 mb-1"></div>
+                <div class="h-1.5 w-20 rounded bg-white/10"></div>
+              </div>
+              <div class="px-3 py-2 rounded-lg">
+                <div class="h-2.5 w-28 rounded bg-white/15 mb-1"></div>
+                <div class="h-1.5 w-16 rounded bg-white/8"></div>
+              </div>
+              <div class="px-3 py-2 rounded-lg">
+                <div class="h-2.5 w-36 rounded bg-white/10 mb-1"></div>
+                <div class="h-1.5 w-14 rounded bg-white/6"></div>
+              </div>
+            </div>
+          </div>
+          <!-- Chat area -->
+          <div class="flex-1 flex flex-col">
+            <div class="h-10 border-b border-white/5 flex items-center px-4 gap-2">
+              <div class="h-2 w-40 rounded bg-white/10"></div>
+              <div class="ml-auto h-6 w-24 rounded-md bg-violet-500/20"></div>
+            </div>
+            <div class="flex-1 p-4 flex flex-col gap-4 overflow-hidden">
+              <!-- User message -->
+              <div class="flex justify-end">
+                <div class="max-w-xs px-4 py-2.5 rounded-2xl rounded-tr-sm bg-violet-500/15">
+                  <div class="h-2 w-48 rounded bg-violet-300/30 mb-1.5"></div>
+                  <div class="h-2 w-32 rounded bg-violet-300/20"></div>
+                </div>
+              </div>
+              <!-- AI message -->
+              <div class="flex gap-2.5">
+                <div class="w-7 h-7 rounded-full bg-white/10 flex-shrink-0"></div>
+                <div class="max-w-sm px-4 py-2.5 rounded-2xl rounded-tl-sm bg-white/5">
+                  <div class="h-2 w-56 rounded bg-white/20 mb-1.5"></div>
+                  <div class="h-2 w-48 rounded bg-white/15 mb-1.5"></div>
+                  <div class="h-2 w-36 rounded bg-white/10"></div>
+                </div>
+              </div>
+              <!-- User message -->
+              <div class="flex justify-end">
+                <div class="max-w-xs px-4 py-2.5 rounded-2xl rounded-tr-sm bg-violet-500/15">
+                  <div class="h-2 w-36 rounded bg-violet-300/25"></div>
+                </div>
+              </div>
+              <!-- AI message with code block -->
+              <div class="flex gap-2.5">
+                <div class="w-7 h-7 rounded-full bg-white/10 flex-shrink-0"></div>
+                <div class="flex-1 px-4 py-2.5 rounded-2xl rounded-tl-sm bg-white/5">
+                  <div class="h-2 w-48 rounded bg-white/20 mb-2"></div>
+                  <div class="rounded-lg p-3 mb-1" style="background:#0f0f1a;border:1px solid rgba(255,255,255,0.06)">
+                    <div class="h-1.5 w-32 rounded bg-violet-400/30 mb-1.5"></div>
+                    <div class="h-1.5 w-44 rounded bg-white/15 mb-1"></div>
+                    <div class="h-1.5 w-28 rounded bg-white/10"></div>
+                  </div>
+                  <!-- streaming cursor -->
+                  <div class="inline-block w-1.5 h-3.5 rounded-sm bg-violet-400/60 animate-pulse ml-0.5 align-middle"></div>
+                </div>
+              </div>
+            </div>
+            <!-- Input -->
+            <div class="p-3 border-t border-white/5">
+              <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/3 px-4 py-2.5">
+                <div class="h-2 flex-1 rounded bg-white/10"></div>
+                <div class="w-7 h-7 rounded-lg bg-violet-500/40"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="py-24 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl md:text-4xl font-black mb-4">Everything you need. Nothing you don't.</h2>
+        <p class="text-white/50 text-lg max-w-xl mx-auto">Built for people who want AI that actually helps — without giving up their privacy.</p>
+      </div>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(124,58,237,0.15)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Runs 100% locally</h3>
+          <p class="text-sm text-white/50 leading-relaxed">Powered by Ollama. Every AI response is generated on your own hardware. Not a single token goes to a cloud server.</p>
+        </div>
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(99,102,241,0.15)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Gmail integration</h3>
+          <p class="text-sm text-white/50 leading-relaxed">AI reads and summarizes your inbox. Flags urgent emails, drafts replies — all processed locally, never uploaded.</p>
+        </div>
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(16,185,129,0.12)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Calendar awareness</h3>
+          <p class="text-sm text-white/50 leading-relaxed">"What's important today?" — Hearth reads your Google Calendar and gives you a smart daily briefing every morning.</p>
+        </div>
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(245,158,11,0.12)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Any model, your choice</h3>
+          <p class="text-sm text-white/50 leading-relaxed">Download Llama 3, Qwen 2.5, Mistral, DeepSeek — or any Ollama model. Switch instantly, no API keys needed.</p>
+        </div>
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(236,72,153,0.12)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Zero telemetry</h3>
+          <p class="text-sm text-white/50 leading-relaxed">No analytics. No crash reports sent anywhere. No account required. We literally cannot see your data — we have no server.</p>
+        </div>
+
+        <div class="feature-card card-glow rounded-2xl p-6">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center mb-4" style="background:rgba(59,130,246,0.12)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          </div>
+          <h3 class="font-bold text-base mb-2">Mobile access via PWA</h3>
+          <p class="text-sm text-white/50 leading-relaxed">Open Hearth on your phone through your home Wi-Fi. Add to home screen — works like a native app, no App Store needed.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy section -->
+  <section id="privacy" class="py-24 px-6" style="background: linear-gradient(180deg, transparent, rgba(124,58,237,0.05), transparent)">
+    <div class="max-w-4xl mx-auto text-center">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-8" style="background:rgba(124,58,237,0.15)">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <h2 class="text-3xl md:text-5xl font-black mb-6">
+        Your data.<br/><span class="gradient-text">Your machine. Period.</span>
+      </h2>
+      <p class="text-lg text-white/50 max-w-2xl mx-auto mb-12 leading-relaxed">
+        ChatGPT and Claude send everything to the cloud. Hearth processes everything on your own computer. Your emails, your conversations, your calendar — none of it ever leaves your home network.
+      </p>
+
+      <div class="grid sm:grid-cols-3 gap-4 text-left">
+        <div class="rounded-2xl p-5" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)">
+          <div class="text-2xl mb-2">🚫</div>
+          <h3 class="font-bold text-sm mb-1">No cloud processing</h3>
+          <p class="text-xs text-white/40">AI runs on your CPU/GPU via Ollama. Zero data leaves your machine.</p>
+        </div>
+        <div class="rounded-2xl p-5" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)">
+          <div class="text-2xl mb-2">🔐</div>
+          <h3 class="font-bold text-sm mb-1">Encrypted credentials</h3>
+          <p class="text-xs text-white/40">OAuth tokens stored in your OS keychain. Never in plaintext, never uploaded.</p>
+        </div>
+        <div class="rounded-2xl p-5" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)">
+          <div class="text-2xl mb-2">📖</div>
+          <h3 class="font-bold text-sm mb-1">Open source</h3>
+          <p class="text-xs text-white/40">Every line of code is public on GitHub. Audit it yourself anytime.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download CTA -->
+  <section class="py-24 px-6">
+    <div class="max-w-2xl mx-auto text-center">
+      <h2 class="text-3xl md:text-4xl font-black mb-4">Ready to take back control?</h2>
+      <p class="text-white/50 mb-10">Free download. No account. No credit card. Just install and chat.</p>
+
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-3 mb-6">
+        <button onclick="downloadApp()" class="btn-primary flex items-center gap-3 px-8 py-4 rounded-xl text-base font-bold text-white w-full sm:w-auto">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span id="ctaLabel">Download for Windows</span>
+        </button>
+        <a id="ctaGithub" href="#" target="_blank" class="platform-btn flex items-center gap-2 px-6 py-4 rounded-xl text-sm font-semibold text-white/70 w-full sm:w-auto justify-center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+
+      <p class="text-xs text-white/25">
+        Requires Ollama · Windows 10+ · macOS 12+ · ~200 MB
+      </p>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-white/5 py-10 px-6">
+    <div class="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#7c3aed,#6366f1)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 4-3 6-4 8H9c-1-2-4-4-4-8a7 7 0 0 1 7-7z"/>
+            <path d="M9 17h6"/><path d="M10 21h4"/>
+          </svg>
+        </div>
+        <span class="font-bold text-sm">Hearth</span>
+        <span class="text-white/25 text-sm">· MIT License</span>
+      </div>
+
+      <div class="flex items-center gap-6">
+        <a id="footerGithub"   href="#" target="_blank" class="text-xs text-white/40 hover:text-white/70 transition-colors">GitHub</a>
+        <a id="footerReleases" href="#" target="_blank" class="text-xs text-white/40 hover:text-white/70 transition-colors">Releases</a>
+        <a id="footerIssues"   href="#" target="_blank" class="text-xs text-white/40 hover:text-white/70 transition-colors">Issues</a>
+        <span id="footerYear" class="text-xs text-white/20"></span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Platform detection ──────────────────────────────────────────────
+    const RELEASES_BASE = HEARTH_CONFIG.downloadBase
+
+    const DOWNLOADS = {
+      windows: { label: 'Download for Windows', file: HEARTH_CONFIG.files.windows },
+      mac:     { label: 'Download for macOS',   file: HEARTH_CONFIG.files.mac     },
+      linux:   { label: 'Download for Linux',   file: HEARTH_CONFIG.files.linux   },
+    }
+
+    function detectPlatform() {
+      const ua = navigator.userAgent
+      if (ua.includes('Win'))  return 'windows'
+      if (ua.includes('Mac'))  return 'mac'
+      return 'linux'
+    }
+
+    function downloadPlatform(platform) {
+      const { file } = DOWNLOADS[platform]
+      window.location.href = `${RELEASES_BASE}/${file}`
+      return false
+    }
+
+    function downloadApp() {
+      downloadPlatform(detectPlatform())
+    }
+
+    // Wire up all config-driven values on load
+    (function init() {
+      // Download button labels
+      const { label } = DOWNLOADS[detectPlatform()]
+      document.getElementById('primaryLabel').textContent = label
+      document.getElementById('ctaLabel').textContent     = label
+
+      // GitHub links
+      const r = HEARTH_CONFIG.repoUrl
+      document.getElementById('navGithub').href      = r
+      document.getElementById('ctaGithub').href      = r
+      document.getElementById('footerGithub').href   = r
+      document.getElementById('footerReleases').href = HEARTH_CONFIG.releasesUrl
+      document.getElementById('footerIssues').href   = `${r}/issues`
+
+      // Footer copyright
+      document.getElementById('footerYear').textContent =
+        `© ${HEARTH_CONFIG.app.year} ${HEARTH_CONFIG.app.name}`
+    })()
+  </script>
+
+</body>
+</html>
