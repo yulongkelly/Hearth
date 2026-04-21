@@ -66,8 +66,15 @@
       }
     ],
     "win": {
-      "target": [{ "target": "portable", "arch": ["x64"] }],
-      "artifactName": "Hearth.exe"
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "Hearth-Setup.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hearth"
     },
     "mac": {
       "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],

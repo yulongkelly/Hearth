@@ -4,11 +4,6 @@ const { spawn } = require('child_process')
 const net = require('net')
 
 const isDev = process.env.NODE_ENV === 'development'
-
-// Portable exe: store data next to the exe so it survives temp cleanup
-if (process.env.PORTABLE_EXECUTABLE_DIR) {
-  app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'Hearth-data'))
-}
 const PORT = 3000
 
 let mainWindow = null
