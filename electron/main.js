@@ -4,6 +4,11 @@ const { spawn } = require('child_process')
 const net = require('net')
 
 const isDev = process.env.NODE_ENV === 'development'
+
+// Portable exe: store data next to the exe so it survives temp cleanup
+if (process.env.PORTABLE_EXECUTABLE_DIR) {
+  app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'Hearth-data'))
+}
 const PORT = 3000
 
 let mainWindow = null
@@ -81,6 +86,12 @@ function createWindow() {
     if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' })
   })
 
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault()
+      mainWindow.minimize()
+    }
+  })
   mainWindow.on('closed', () => { mainWindow = null })
 
   // Open external links in the system browser, not inside the app
@@ -140,6 +151,7 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  app.isQuitting = true
   if (nextProcess) {
     nextProcess.kill()
     nextProcess = null
