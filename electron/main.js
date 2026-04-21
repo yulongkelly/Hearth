@@ -35,12 +35,13 @@ async function startNextServer() {
   // In production, Next.js standalone is in resources/app/
   const serverJs = path.join(process.resourcesPath, 'app', 'server.js')
 
-  // Use Electron's own Node.js runtime to run the server
+  // ELECTRON_RUN_AS_NODE=1 makes the Electron binary behave like plain Node.js
   nextProcess = spawn(process.execPath, [serverJs], {
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       PORT: String(PORT),
-      HOSTNAME: '127.0.0.1',
+      HOSTNAME: '0.0.0.0',
       NODE_ENV: 'production',
     },
     stdio: 'pipe',
@@ -50,7 +51,6 @@ async function startNextServer() {
   nextProcess.stderr.on('data', d => console.error('[server]', d.toString().trim()))
   nextProcess.on('exit', code => {
     console.log('[server] exited with code', code)
-    // If the server dies unexpectedly, quit the whole app
     if (mainWindow) app.quit()
   })
 
