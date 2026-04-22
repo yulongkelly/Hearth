@@ -2,8 +2,9 @@
 
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plug2, Send, CalendarDays, Hash } from 'lucide-react'
+import { Plug2, Send, Hash } from 'lucide-react'
 import { GmailCard } from '@/components/integrations/gmail-card'
+import { CalendarCard } from '@/components/integrations/calendar-card'
 import { ComingSoonCard } from '@/components/integrations/coming-soon-card'
 
 function IntegrationsContent() {
@@ -31,13 +32,7 @@ function IntegrationsContent() {
           name="Telegram"
           description="Get message summaries and send replies via AI."
         />
-        <ComingSoonCard
-          icon={CalendarDays}
-          iconBg="bg-green-500/10"
-          iconColor="text-green-400"
-          name="Google Calendar"
-          description="Let Hearth see your schedule and suggest meeting times."
-        />
+        <CalendarCard initialError={oauthError} />
         <ComingSoonCard
           icon={Hash}
           iconBg="bg-purple-500/10"
