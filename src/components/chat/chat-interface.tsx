@@ -43,6 +43,8 @@ export function ChatInterface() {
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [ollamaError, setOllamaError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [toolStatus, setToolStatus] = useState<string | null>(null)
+  const [googleConnected, setGoogleConnected] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -80,6 +82,13 @@ export function ChatInterface() {
     const interval = setInterval(refreshModels, 10000)
     return () => clearInterval(interval)
   }, [refreshModels])
+
+  useEffect(() => {
+    fetch('/api/gmail/status')
+      .then(r => r.json())
+      .then(data => setGoogleConnected(!!(data.configured && data.connected)))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -204,7 +213,12 @@ export function ChatInterface() {
         for (const line of lines) {
           try {
             const data = JSON.parse(line)
+            if (data.tool_status) {
+              setToolStatus(data.tool_status)
+              continue
+            }
             if (data.message?.content) {
+              setToolStatus(null)
               accumulated += data.message.content
               const content = accumulated
               setConversations(prev => {
@@ -242,6 +256,7 @@ export function ChatInterface() {
       }
     } finally {
       setIsStreaming(false)
+      setToolStatus(null)
       abortRef.current = null
     }
   }, [input, isStreaming, selectedModel, activeId, conversations, createConversation])
@@ -341,6 +356,14 @@ export function ChatInterface() {
             </p>
           </div>
 
+          {/* Connected tools badge */}
+          {googleConnected && (
+            <div className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2 py-1 text-[10px] text-green-500 font-medium flex-shrink-0">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Gmail + Calendar
+            </div>
+          )}
+
           {/* Model selector */}
           {models.length > 0 && (
             <select
@@ -395,6 +418,12 @@ export function ChatInterface() {
                   isStreaming={isStreaming && i === activeMessages.length - 1 && msg.role === 'assistant'}
                 />
               ))
+            )}
+            {toolStatus && (
+              <div className="flex items-center gap-2 px-4 py-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">{toolStatus}</span>
+              </div>
             )}
             <div ref={bottomRef} />
           </div>

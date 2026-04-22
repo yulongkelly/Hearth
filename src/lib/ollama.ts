@@ -61,6 +61,25 @@ export interface OllamaPullChunk {
   completed?: number
 }
 
+export interface OllamaToolCall {
+  function: { name: string; arguments: Record<string, unknown> | string }
+}
+
+export interface OllamaChatMessageWithTools {
+  role: string
+  content: string
+  tool_calls?: OllamaToolCall[]
+}
+
+export interface OllamaToolDefinition {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: { type: 'object'; properties: Record<string, { type: string; description: string }>; required: string[] }
+  }
+}
+
 export async function checkOllamaStatus(): Promise<boolean> {
   try {
     const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
