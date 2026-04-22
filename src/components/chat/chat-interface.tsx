@@ -59,14 +59,11 @@ export function ChatInterface() {
     if (savedModel) setSelectedModel(savedModel)
   }, [])
 
-  useEffect(() => {
+  const refreshModels = useCallback(() => {
     fetch('/api/ollama/tags')
       .then(r => r.json())
       .then(data => {
-        if (data.error) {
-          setOllamaError(data.error)
-          return
-        }
+        if (data.error) { setOllamaError(data.error); return }
         const names: string[] = (data.models || []).map((m: { name: string }) => m.name)
         setModels(names)
         setOllamaError(null)
@@ -76,7 +73,14 @@ export function ChatInterface() {
         }
       })
       .catch(() => setOllamaError('Cannot connect to Ollama'))
-  }, [])
+  }, [selectedModel])
+
+  useEffect(() => {
+    refreshModels()
+    const onFocus = () => refreshModels()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshModels])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
