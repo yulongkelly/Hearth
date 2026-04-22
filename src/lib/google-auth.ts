@@ -13,29 +13,35 @@ export interface GoogleTokens {
 }
 
 function ensureDir() {
-  if (!fs.existsSync(HEARTH_DIR)) fs.mkdirSync(HEARTH_DIR, { recursive: true })
+  if (!fs.existsSync(HEARTH_DIR)) {
+    fs.mkdirSync(HEARTH_DIR, { recursive: true, mode: 0o700 })
+  }
 }
 
-function getClientId(): string {
-  try { return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8')).clientId ?? '' } catch { return '' }
+function writeSecureFile(filePath: string, content: string) {
+  ensureDir()
+  fs.writeFileSync(filePath, content, { mode: 0o600 })
 }
 
-function getClientSecret(): string {
-  try { return JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8')).clientSecret ?? '' } catch { return '' }
+// Read both fields in one parse to avoid TOCTOU between two reads
+function readCredentials(): { clientId: string; clientSecret: string } | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
+    if (raw?.clientId && raw?.clientSecret) return raw
+    return null
+  } catch { return null }
 }
 
 export function isConfigured(): boolean {
-  return !!(getClientId() && getClientSecret())
+  return readCredentials() !== null
 }
 
 export function saveCredentials(clientId: string, clientSecret: string) {
-  ensureDir()
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify({ clientId, clientSecret }, null, 2))
+  writeSecureFile(CREDENTIALS_FILE, JSON.stringify({ clientId, clientSecret }, null, 2))
 }
 
 export function saveTokens(tokens: GoogleTokens) {
-  ensureDir()
-  fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2))
+  writeSecureFile(TOKENS_FILE, JSON.stringify(tokens, null, 2))
 }
 
 export function loadTokens(): GoogleTokens | null {
@@ -53,16 +59,15 @@ export async function getValidAccessToken(): Promise<string | null> {
   if (!tokens) return null
   if (Date.now() < tokens.expiresAt - 60_000) return tokens.accessToken
 
-  const clientId = getClientId()
-  const clientSecret = getClientSecret()
-  if (!clientId || !clientSecret) return null
+  const creds = readCredentials()
+  if (!creds) return null
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       refresh_token: tokens.refreshToken,
       grant_type: 'refresh_token',
     }),
@@ -80,8 +85,10 @@ export async function getValidAccessToken(): Promise<string | null> {
 }
 
 export function buildAuthUrl(): string {
+  const creds = readCredentials()
+  if (!creds) throw new Error('Google credentials not configured')
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
-  url.searchParams.set('client_id', getClientId())
+  url.searchParams.set('client_id', creds.clientId)
   url.searchParams.set('redirect_uri', REDIRECT_URI)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('scope', SCOPES)
@@ -91,13 +98,15 @@ export function buildAuthUrl(): string {
 }
 
 export async function exchangeCode(code: string) {
+  const creds = readCredentials()
+  if (!creds) throw new Error('Google credentials not configured')
   return fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       code,
-      client_id: getClientId(),
-      client_secret: getClientSecret(),
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
       redirect_uri: REDIRECT_URI,
       grant_type: 'authorization_code',
     }),

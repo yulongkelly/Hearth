@@ -92,7 +92,8 @@ function parseArgs(raw: unknown): Record<string, unknown> {
 // ─── Gmail body decoder ───────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function decodeGmailBody(payload: any): string {
+function decodeGmailBody(payload: any, depth = 0): string {
+  if (depth > 10) return ''
   if (payload?.body?.data) {
     try { return Buffer.from(payload.body.data, 'base64url').toString('utf-8') } catch {}
   }
@@ -106,7 +107,7 @@ function decodeGmailBody(payload: any): string {
     }
     // Recurse into nested multipart
     for (const part of payload.parts) {
-      const body = decodeGmailBody(part)
+      const body = decodeGmailBody(part, depth + 1)
       if (body) return body
     }
   }
@@ -151,6 +152,7 @@ async function execReadEmail(args: Record<string, unknown>): Promise<string> {
 
   const id = String(args.id ?? '')
   if (!id) return 'Error: message id is required.'
+  if (!/^[a-zA-Z0-9]+$/.test(id)) return 'Error: invalid message id.'
 
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
@@ -209,7 +211,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'get_calendar_events': return await execGetCalendarEvents(args)
       default:                    return `Error: unknown tool "${name}"`
     }
-  } catch (err) {
-    return `Error executing ${name}: ${err instanceof Error ? err.message : String(err)}`
+  } catch {
+    return `Error: tool "${name}" failed. Please try again.`
   }
 }

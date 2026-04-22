@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
   if (!clientId?.trim() || !clientSecret?.trim()) {
     return NextResponse.json({ error: 'Both fields are required' }, { status: 400 })
   }
+  if (clientId.length > 500 || clientSecret.length > 500) {
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 400 })
+  }
   saveCredentials(clientId.trim(), clientSecret.trim())
   return NextResponse.json({ ok: true })
 }
