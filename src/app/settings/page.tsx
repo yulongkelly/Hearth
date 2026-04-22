@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Save, RotateCcw } from 'lucide-react'
+import { Save, RotateCcw, ExternalLink } from 'lucide-react'
+import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -61,6 +62,22 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex flex-col gap-6 p-6 max-w-2xl">
+        {/* Google Account */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Google Account</CardTitle>
+            <CardDescription>Manage your Gmail connection and OAuth credentials.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/integrations">
+              <Button size="sm" variant="outline" className="gap-1.5">
+                <ExternalLink className="h-3.5 w-3.5" />
+                Manage in Connected Apps
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+
         {/* Ollama */}
         <Card>
           <CardHeader>

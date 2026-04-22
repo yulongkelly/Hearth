@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
-  MessageSquare, Cpu, Mail, CalendarDays, ArrowRight,
+  MessageSquare, Cpu, Plug2, ArrowRight,
   CheckCircle2, AlertCircle, Zap, Brain
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -118,31 +118,20 @@ export default function DashboardPage() {
           </Card>
         </Link>
 
-        <Card className="opacity-50 cursor-not-allowed">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
-              <Mail className="h-5 w-5 text-blue-400" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium">Gmail</p>
-              <p className="text-xs text-muted-foreground">Coming soon</p>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">Soon</Badge>
-          </CardContent>
-        </Card>
-
-        <Card className="opacity-50 cursor-not-allowed">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-              <CalendarDays className="h-5 w-5 text-green-400" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium">Calendar</p>
-              <p className="text-xs text-muted-foreground">Coming soon</p>
-            </div>
-            <Badge variant="secondary" className="text-[10px]">Soon</Badge>
-          </CardContent>
-        </Card>
+        <Link href="/integrations">
+          <Card className="group cursor-pointer transition-colors hover:border-primary/50">
+            <CardContent className="flex items-center gap-4 p-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors">
+                <Plug2 className="h-5 w-5 text-blue-400" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Connected Apps</p>
+                <p className="text-xs text-muted-foreground">Gmail, Telegram & more</p>
+              </div>
+              <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       {/* System status */}

@@ -23,6 +23,11 @@ export interface AppSettings {
   systemPrompt: string
 }
 
+export interface GmailStatus {
+  configured: boolean
+  connected: boolean
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   ollamaUrl: 'http://localhost:11434',
   defaultModel: '',
