@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { setNickname } from '@/lib/google-auth'
+import { setNickname, listAccounts } from '@/lib/google-auth'
+
+export async function GET() {
+  return NextResponse.json({ accounts: listAccounts() })
+}
 
 export const dynamic = 'force-dynamic'
 

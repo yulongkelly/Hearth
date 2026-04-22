@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { loadUserTools } from '@/lib/user-tools'
+import { loadWorkflowTools } from '@/lib/workflow-tools'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -35,8 +36,8 @@ export function Sidebar() {
   const [hasTools, setHasTools] = useState(false)
 
   useEffect(() => {
-    setHasTools(loadUserTools().length > 0)
-    const handler = () => setHasTools(loadUserTools().length > 0)
+    setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
+    const handler = () => setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
     window.addEventListener('hearth:tool-created', handler)
     return () => window.removeEventListener('hearth:tool-created', handler)
   }, [])

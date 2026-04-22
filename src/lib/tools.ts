@@ -2,33 +2,49 @@ import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens }
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
-const CREATE_TOOL_DEFINITION = {
+const CREATE_WORKFLOW_DEFINITION = {
   type: 'function' as const,
   function: {
-    name: 'create_tool',
-    description: 'Save a reusable tool to the user sidebar. Call ONLY after asking 1-2 clarifying questions to understand the exact requirement. Each tool must have exactly ONE core functionality. If the user asks for something that serves multiple goals, list those goals, explain the single-responsibility rule, and suggest creating separate tools.',
+    name: 'create_workflow',
+    description: `Create a reusable workflow tool saved to the sidebar. Call ONLY after ask_clarification. ONLY use these exact step names — no others: get_calendar_events, get_inbox, read_email, merge_lists, detect_conflicts, filter_events, summarize. Output ONLY a valid JSON object. Max 8 steps.`,
     parameters: {
       type: 'object',
       properties: {
-        name:        { type: 'string', description: 'Short tool name shown in sidebar (e.g. "Summarize emails by date")' },
+        name:        { type: 'string', description: 'Short tool name shown in sidebar' },
         description: { type: 'string', description: 'One sentence describing what this tool does' },
         icon:        { type: 'string', description: 'One of: Mail, Calendar, FileText, Search, BarChart, List' },
+        goal:        { type: 'string', description: 'The user\'s goal in plain English' },
         parameters: {
           type: 'array',
-          description: 'Input parameters the user fills in before each run',
+          description: 'User inputs filled in before each run (e.g. date range, account). Omit if no user inputs needed.',
           items: {
             type: 'object',
             properties: {
-              name:         { type: 'string', description: 'Parameter key used in prompt template (no spaces)' },
-              label:        { type: 'string', description: 'Human-readable label shown in the form' },
+              name:         { type: 'string', description: 'Key used in step params as {name}' },
+              label:        { type: 'string', description: 'Human-readable label' },
               type:         { type: 'string', description: 'One of: text, date, number' },
-              defaultValue: { type: 'string', description: 'Pre-filled value shown when the tool opens. Use the most common value (e.g. today\'s date in YYYY-MM-DD for a date field, a typical range like "last 7 days" for text).' },
+              defaultValue: { type: 'string', description: 'Pre-filled default value' },
             },
+            required: ['name', 'label', 'type'],
           },
         },
-        prompt: { type: 'string', description: 'Prompt template with {paramName} placeholders that will be sent to the AI when the tool runs' },
+        steps: {
+          type: 'array',
+          description: 'Ordered list of steps. Use $outputVar to reference a previous step\'s output. Use {paramName} to reference a user parameter.',
+          items: {
+            type: 'object',
+            properties: {
+              id:     { type: 'string',  description: 'Unique step id, e.g. "step1"' },
+              type:   { type: 'string',  description: '"tool" for API calls, "action" for in-process operations' },
+              name:   { type: 'string',  description: 'Exact step name from the whitelist' },
+              params: { type: 'object',  description: 'Step parameters. Values may be literals, $varName references, or {paramName} user inputs.' },
+              output: { type: 'string',  description: 'Variable name to store this step\'s output for downstream steps' },
+            },
+            required: ['id', 'type', 'name', 'params', 'output'],
+          },
+        },
       },
-      required: ['name', 'description', 'icon', 'parameters', 'prompt'],
+      required: ['name', 'description', 'icon', 'goal', 'steps'],
     },
   },
 }
@@ -159,12 +175,12 @@ const GOOGLE_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_TOOL_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
 
-// ─── Tool exposure — memory + create_tool + ask_clarification always; Google tools when connected ─
+// ─── Tool exposure — memory + create_workflow + ask_clarification always; Google tools when connected ─
 
 export function getAvailableTools() {
-  const always = [MEMORY_TOOL_DEFINITION, CREATE_TOOL_DEFINITION, ASK_CLARIFICATION_DEFINITION] as const
+  const always = [MEMORY_TOOL_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION] as const
   if (isConfigured() && loadTokens()) return TOOL_DEFINITIONS
   return always
 }
@@ -176,7 +192,7 @@ export function toolStatusLabel(name: string): string {
     get_inbox: 'Checking Gmail...',
     read_email: 'Reading email...',
     get_calendar_events: 'Checking Calendar...',
-    create_tool: 'Creating tool...',
+    create_workflow: 'Creating workflow...',
     memory: 'Updating memory…',
   }
   return labels[name] ?? 'Using a tool...'

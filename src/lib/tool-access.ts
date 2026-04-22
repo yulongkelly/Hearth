@@ -6,7 +6,7 @@ export const TOOL_ACCESS: Record<string, ToolAccess> = {
   get_calendar_events: 'read',
   ask_clarification:   'read',
   memory:              'read',
-  create_tool:         'write',
+  create_workflow:     'read',
 }
 
 export function getToolAccess(name: string): ToolAccess {
@@ -15,8 +15,8 @@ export function getToolAccess(name: string): ToolAccess {
 
 export function buildPreview(name: string, args: Record<string, unknown>): string {
   switch (name) {
-    case 'create_tool':
-      return `Create tool "${args.name ?? 'unnamed'}": ${args.description ?? ''}`
+    case 'create_workflow':
+      return `Create workflow "${args.name ?? 'unnamed'}": ${args.description ?? ''}`
     default:
       return `Run ${name}: ${JSON.stringify(args)}`
   }

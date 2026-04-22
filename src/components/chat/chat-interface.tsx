@@ -8,9 +8,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { MessageItem } from './message-item'
 import { cn, generateId, truncate, formatRelativeTime } from '@/lib/utils'
 import type { Conversation, Message } from '@/lib/types'
-import { addUserTool } from '@/lib/user-tools'
+import { addUserTool, type UserTool } from '@/lib/user-tools'
+import { addWorkflowTool, type WorkflowTool } from '@/lib/workflow-tools'
 import { ApprovalCard } from './approval-card'
 import { QuestionsPopup, type ClarificationQuestion } from './questions-popup'
+import { WorkflowPlanEditor } from '@/components/tools/workflow-plan-editor'
 import type { ToolAccess } from '@/lib/tool-access'
 
 const STORAGE_KEY = 'hearth_conversations'
@@ -62,6 +64,8 @@ export function ChatInterface() {
   const [googleConnected, setGoogleConnected] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<Array<{ id: string; tool: string; preview: string; risk: ToolAccess }>>([])
   const [pendingQuestions, setPendingQuestions] = useState<{ id: string; questions: ClarificationQuestion[] } | null>(null)
+  const [pendingTool, setPendingTool] = useState<UserTool | null>(null)
+  const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowTool | null>(null)
 
   async function handleAnswers(id: string, answers: string[]) {
     setPendingQuestions(null)
@@ -263,6 +267,14 @@ export function ChatInterface() {
             if (data.tool_created) {
               addUserTool(data.tool_created)
               window.dispatchEvent(new CustomEvent('hearth:tool-created'))
+              continue
+            }
+            if (data.pending_tool) {
+              setPendingTool(data.pending_tool)
+              continue
+            }
+            if (data.pending_workflow) {
+              setPendingWorkflow(data.pending_workflow)
               continue
             }
             if (data.message?.content) {
@@ -505,6 +517,41 @@ export function ChatInterface() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Pending tool save card */}
+        {pendingTool && (
+          <div className="border-t border-border bg-card px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium truncate">{pendingTool.name}</p>
+              <p className="text-[10px] text-muted-foreground truncate">{pendingTool.description}</p>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPendingTool(null)}>
+                Cancel
+              </Button>
+              <Button size="sm" className="h-7 text-xs" onClick={() => {
+                addUserTool(pendingTool)
+                window.dispatchEvent(new CustomEvent('hearth:tool-created'))
+                setPendingTool(null)
+              }}>
+                Save to sidebar
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Workflow plan editor */}
+        {pendingWorkflow && (
+          <WorkflowPlanEditor
+            workflow={pendingWorkflow}
+            onSave={wf => {
+              addWorkflowTool(wf)
+              window.dispatchEvent(new CustomEvent('hearth:tool-created'))
+              setPendingWorkflow(null)
+            }}
+            onCancel={() => setPendingWorkflow(null)}
+          />
         )}
 
         {/* Input area */}

@@ -2,12 +2,13 @@ import { NextRequest } from 'next/server'
 import { OLLAMA_BASE_URL } from '@/lib/ollama'
 import type { OllamaChatMessageWithTools } from '@/lib/ollama'
 import { getAvailableTools, executeTool, toolStatusLabel } from '@/lib/tools'
-import type { UserTool, ToolParameter } from '@/lib/user-tools'
 import { getToolAccess, buildPreview } from '@/lib/tool-access'
 import { waitForApproval } from '@/lib/approval-store'
 import { waitForAnswers } from '@/lib/questions-store'
 import { readMemory, readMemoryTrimmed, addEntry, replaceEntry, removeEntry } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
+import { compile, compileRetryPrompt } from '@/lib/workflow-compiler'
+import type { WorkflowTool } from '@/lib/workflow-tools'
 
 const NDJSON_HEADERS = {
   'Content-Type': 'application/x-ndjson',
@@ -20,9 +21,7 @@ const MAX_TOOL_ITERATIONS = 5
 
 const SYSTEM_MESSAGE = `You have access to the user's Gmail and Google Calendar via function tools. When the user asks about their email, inbox, or calendar events, ALWAYS call the appropriate tool to fetch real data — do not say you cannot access these services.
 
-You can create reusable sidebar tools using the create_tool function. Before calling create_tool you MUST call ask_clarification — do NOT write questions as plain text in the chat. ask_clarification shows a structured popup with clickable options. Ask about: what the tool should do, how parameters should work, and what the output should look like. IMPORTANT parameter type mapping: if the user chooses a calendar/date picker option → use type "date"; if they choose relative text like "last week" → use type "text"; numeric values → use type "number". Each tool must have ONE core functionality. If a user describes multiple goals, use ask_clarification to help them choose one.
-
-After clarifying, DEMONSTRATE the tool before saving it: call the relevant underlying tools (get_calendar_events, get_inbox, etc.) with realistic values and show the user a formatted sample result. ONLY after showing the live output should you call create_tool. This lets the user confirm the result looks right before the tool is saved. Never call create_tool without first running a demo. When the tool has date parameters, set sensible defaultValues (e.g. today's date in YYYY-MM-DD format).
+You can create reusable workflow tools using create_workflow. Before calling create_workflow you MUST call ask_clarification — do NOT write questions as plain text in the chat. ask_clarification shows a structured popup with clickable options. Ask about: which data sources (Gmail/Calendar), which accounts, what time range, and what output the user wants. NEVER ask where to save — it is always saved to the sidebar. After clarification, call create_workflow immediately with the workflow JSON. The workflow steps MUST use ONLY these exact names: get_calendar_events, get_inbox, read_email, merge_lists, detect_conflicts, filter_events, summarize. Do NOT invent step names. Do NOT explain — just call the tools.
 
 You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Save when: the user states a preference or habit, corrects you, shares personal details (name, role, timezone, tech stack), or you learn a stable convention about their workflow. Do NOT save: task progress, session outcomes, completed TODOs, or transient data.`
 
@@ -71,9 +70,8 @@ export async function POST(req: NextRequest) {
     userBlock ? `<user_profile>\n${userBlock}\n</user_profile>` : '',
   ].filter(Boolean).join('\n\n')
 
-  const fullSystemMessage = memorySection
-    ? SYSTEM_MESSAGE + '\n\n' + memorySection
-    : SYSTEM_MESSAGE
+  const todayLine = `Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Use this when computing date ranges or referencing days of the week.`
+  const fullSystemMessage = [SYSTEM_MESSAGE, todayLine, memorySection || ''].filter(Boolean).join('\n\n')
 
   const { readable, writable } = new TransformStream()
   const writer = writable.getWriter()
@@ -158,6 +156,48 @@ export async function POST(req: NextRequest) {
               return questions.map((q, i) => `Q: ${q.question}\nA: ${answers[i] ?? '(no answer)'}`).join('\n\n')
             }
 
+            // ── create_workflow: compile → retry if invalid → emit pending_workflow ─
+            if (tc.function.name === 'create_workflow') {
+              writeLine({ tool_status: 'Building workflow…' })
+
+              let compiled = compile(tc.function.arguments)
+
+              // Retry up to 2x if the model output was invalid JSON / bad step names
+              for (let retry = 0; !compiled.ok && retry < 2; retry++) {
+                const retryMessages: OllamaChatMessageWithTools[] = [
+                  ...loopMessages,
+                  { role: 'tool', content: compileRetryPrompt(compiled.error ?? 'unknown error') },
+                ]
+                const retryRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ model, messages: retryMessages, stream: false, tools: availableTools }),
+                  signal: AbortSignal.timeout(60_000),
+                })
+                if (!retryRes.ok) break
+                const retryData = await retryRes.json()
+                const retryMsg: OllamaChatMessageWithTools = retryData.message
+                if (retryMsg?.tool_calls?.[0]?.function?.name === 'create_workflow') {
+                  compiled = compile(retryMsg.tool_calls[0].function.arguments)
+                } else {
+                  break
+                }
+              }
+
+              if (!compiled.ok) {
+                return `Error building workflow: ${compiled.error}. Please try again with a simpler description.`
+              }
+
+              const pendingWorkflow: WorkflowTool = {
+                ...compiled.workflow!,
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+                runs: [],
+              }
+              writeLine({ pending_workflow: pendingWorkflow })
+              return `Workflow plan shown to user for review. They can edit the steps and save it to the sidebar.`
+            }
+
             const access = getToolAccess(tc.function.name)
 
             // ── Safety gate: pause for user approval on write/destructive tools ──
@@ -173,23 +213,6 @@ export async function POST(req: NextRequest) {
               })
               const approved = await waitForApproval(approvalId)
               if (!approved) return 'Action rejected by user.'
-            }
-
-            // ── create_tool handled inline ────────────────────────────────────
-            if (tc.function.name === 'create_tool') {
-              writeLine({ tool_status: toolStatusLabel('create_tool') })
-              const newTool: UserTool = {
-                id: crypto.randomUUID(),
-                name: String(args.name ?? ''),
-                description: String(args.description ?? ''),
-                icon: String(args.icon ?? 'FileText'),
-                parameters: (args.parameters as ToolParameter[]) ?? [],
-                prompt: String(args.prompt ?? ''),
-                createdAt: new Date().toISOString(),
-                runs: [],
-              }
-              writeLine({ tool_created: newTool })
-              return `Tool "${newTool.name}" saved to the sidebar. The output I just showed you is what it produces each time it runs.`
             }
 
             writeLine({ tool_status: toolStatusLabel(tc.function.name) })
