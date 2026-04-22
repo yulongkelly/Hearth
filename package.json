@@ -77,7 +77,7 @@
       "shortcutName": "Hearth"
     },
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["universal"] }],
+      "target": [{ "target": "dmg", "arch": ["arm64"] }],
       "category": "public.app-category.productivity",
       "artifactName": "Hearth.dmg"
     }

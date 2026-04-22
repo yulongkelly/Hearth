@@ -17,9 +17,12 @@ jobs:
       - run: npm run dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_BUILDER_SKIP_PUBLISH: true
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/Hearth-Setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-mac:
     runs-on: macos-latest
@@ -32,6 +35,9 @@ jobs:
       - run: npm run dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_BUILDER_SKIP_PUBLISH: true
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/Hearth.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
