@@ -77,9 +77,8 @@ export function ChatInterface() {
 
   useEffect(() => {
     refreshModels()
-    const onFocus = () => refreshModels()
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    const interval = setInterval(refreshModels, 10000)
+    return () => clearInterval(interval)
   }, [refreshModels])
 
   useEffect(() => {
