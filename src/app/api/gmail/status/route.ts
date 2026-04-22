@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
-import { isConfigured, loadTokens } from '@/lib/google-auth'
+import { isConfigured, listAccounts } from '@/lib/google-auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  const accounts = listAccounts()
   return NextResponse.json({
     configured: isConfigured(),
-    connected: !!loadTokens(),
+    connected: accounts.length > 0,
+    accounts,
   })
 }

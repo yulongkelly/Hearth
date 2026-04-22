@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { exchangeCode, saveTokens } from '@/lib/google-auth'
+import { exchangeCode, addAccount } from '@/lib/google-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,21 @@ export async function GET(req: NextRequest) {
   }
 
   const data = await res.json()
-  saveTokens({
+
+  // Fetch the account email using the Gmail profile endpoint (covered by gmail.readonly scope)
+  let email = 'unknown@google.com'
+  try {
+    const profileRes = await fetch(
+      'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+      { headers: { Authorization: `Bearer ${data.access_token}` } }
+    )
+    if (profileRes.ok) {
+      const profile = await profileRes.json()
+      if (profile.emailAddress) email = profile.emailAddress
+    }
+  } catch {}
+
+  addAccount(email, {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: Date.now() + data.expires_in * 1000,

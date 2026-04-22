@@ -19,7 +19,7 @@ export function CalendarCard({ initialError }: CalendarCardProps) {
   useEffect(() => {
     fetch('/api/gmail/status')
       .then(r => r.json())
-      .then(({ connected }: GmailStatus) => setCardState(connected ? 'connected' : 'disconnected'))
+      .then((data: GmailStatus) => setCardState(data.connected ? 'connected' : 'disconnected'))
       .catch(() => setCardState('disconnected'))
   }, [])
 

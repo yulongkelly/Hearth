@@ -4,13 +4,19 @@ import os from 'os'
 
 const HEARTH_DIR = path.join(os.homedir(), '.hearth')
 const CREDENTIALS_FILE = path.join(HEARTH_DIR, 'google-credentials.json')
-const TOKENS_FILE = path.join(HEARTH_DIR, 'google-tokens.json')
+const ACCOUNTS_FILE = path.join(HEARTH_DIR, 'google-accounts.json')
 
 export interface GoogleTokens {
   accessToken: string
   refreshToken: string
   expiresAt: number
 }
+
+export interface GoogleAccount extends GoogleTokens {
+  nickname?: string | null
+}
+
+export type GoogleAccounts = Record<string, GoogleAccount>
 
 function ensureDir() {
   if (!fs.existsSync(HEARTH_DIR)) {
@@ -40,24 +46,49 @@ export function saveCredentials(clientId: string, clientSecret: string) {
   writeSecureFile(CREDENTIALS_FILE, JSON.stringify({ clientId, clientSecret }, null, 2))
 }
 
-export function saveTokens(tokens: GoogleTokens) {
-  writeSecureFile(TOKENS_FILE, JSON.stringify(tokens, null, 2))
-}
+// ─── Multi-account storage ────────────────────────────────────────────────────
 
-export function loadTokens(): GoogleTokens | null {
+export function loadAccounts(): GoogleAccounts {
   try {
-    return JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8'))
-  } catch { return null }
+    return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'))
+  } catch { return {} }
 }
 
-export function deleteTokens() {
-  try { fs.unlinkSync(TOKENS_FILE) } catch {}
+export function saveAccounts(accounts: GoogleAccounts) {
+  writeSecureFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2))
 }
 
-export async function getValidAccessToken(): Promise<string | null> {
-  const tokens = loadTokens()
-  if (!tokens) return null
-  if (Date.now() < tokens.expiresAt - 60_000) return tokens.accessToken
+export function addAccount(email: string, tokens: GoogleTokens, nickname?: string) {
+  const accounts = loadAccounts()
+  accounts[email] = {
+    ...tokens,
+    nickname: nickname ?? accounts[email]?.nickname ?? null,
+  }
+  saveAccounts(accounts)
+}
+
+export function removeAccount(email: string) {
+  const accounts = loadAccounts()
+  delete accounts[email]
+  saveAccounts(accounts)
+}
+
+export function listAccounts(): Array<{ email: string; nickname?: string | null }> {
+  return Object.entries(loadAccounts()).map(([email, acc]) => ({ email, nickname: acc.nickname }))
+}
+
+export function setNickname(email: string, nickname: string) {
+  const accounts = loadAccounts()
+  if (!accounts[email]) return
+  accounts[email].nickname = nickname.trim() || null
+  saveAccounts(accounts)
+}
+
+export async function getValidAccessTokenForAccount(email: string): Promise<string | null> {
+  const accounts = loadAccounts()
+  const account = accounts[email]
+  if (!account) return null
+  if (Date.now() < account.expiresAt - 60_000) return account.accessToken
 
   const creds = readCredentials()
   if (!creds) return null
@@ -68,21 +99,36 @@ export async function getValidAccessToken(): Promise<string | null> {
     body: new URLSearchParams({
       client_id: creds.clientId,
       client_secret: creds.clientSecret,
-      refresh_token: tokens.refreshToken,
+      refresh_token: account.refreshToken,
       grant_type: 'refresh_token',
     }),
   })
 
   if (!res.ok) return null
   const data = await res.json()
-  const newTokens: GoogleTokens = {
+  accounts[email] = {
+    ...accounts[email],
     accessToken: data.access_token,
-    refreshToken: tokens.refreshToken,
     expiresAt: Date.now() + data.expires_in * 1000,
   }
-  saveTokens(newTokens)
-  return newTokens.accessToken
+  saveAccounts(accounts)
+  return accounts[email].accessToken
 }
+
+// ─── Backwards-compat shims (used by single-account callers) ─────────────────
+
+export function loadTokens(): GoogleAccount | null {
+  const entries = Object.values(loadAccounts())
+  return entries.length > 0 ? entries[0] : null
+}
+
+export async function getValidAccessToken(): Promise<string | null> {
+  const emails = Object.keys(loadAccounts())
+  if (emails.length === 0) return null
+  return getValidAccessTokenForAccount(emails[0])
+}
+
+// ─── OAuth helpers ────────────────────────────────────────────────────────────
 
 export function buildAuthUrl(): string {
   const creds = readCredentials()

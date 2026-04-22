@@ -1,4 +1,4 @@
-import { getValidAccessToken, isConfigured, loadTokens } from '@/lib/google-auth'
+import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -100,13 +100,17 @@ const GOOGLE_TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'get_inbox',
-      description: 'List recent emails from the Gmail inbox. Returns sender, subject, snippet, and message id for each email.',
+      description: 'List recent emails from the Gmail inbox. Returns sender, subject, snippet, and message id for each email. When multiple accounts are connected, omit account to check all of them.',
       parameters: {
         type: 'object',
         properties: {
           maxResults: {
             type: 'number',
-            description: 'Number of emails to return. Default 10, max 20.',
+            description: 'Number of emails to return per account. Default 10, max 20.',
+          },
+          account: {
+            type: 'string',
+            description: 'Email address or nickname of the account to check (e.g. "work" or "me@gmail.com"). Omit to check all connected accounts.',
           },
         },
         required: [],
@@ -122,6 +126,10 @@ const GOOGLE_TOOL_DEFINITIONS = [
         type: 'object',
         properties: {
           id: { type: 'string', description: 'The Gmail message id from get_inbox' },
+          account: {
+            type: 'string',
+            description: 'Email address or nickname of the account the message belongs to. Pass the same account value shown in get_inbox results.',
+          },
         },
         required: ['id'],
       },
@@ -137,7 +145,11 @@ const GOOGLE_TOOL_DEFINITIONS = [
         properties: {
           maxResults: {
             type: 'number',
-            description: 'Number of events to return. Default 10.',
+            description: 'Number of events to return per account. Default 10.',
+          },
+          account: {
+            type: 'string',
+            description: 'Email address or nickname of the account to check. Omit to check all connected accounts.',
           },
         },
         required: [],
@@ -212,21 +224,39 @@ function decodeGmailBody(payload: any, depth = 0): string {
   return ''
 }
 
+// ─── Account resolution ───────────────────────────────────────────────────────
+
+function resolveAccount(accountArg: unknown): string[] {
+  const accounts = listAccounts()
+  if (!accounts.length) return []
+  if (!accountArg) return accounts.map(a => a.email)
+  const query = String(accountArg).toLowerCase().trim()
+  const match = accounts.find(
+    a => a.email.toLowerCase() === query || (a.nickname ?? '').toLowerCase() === query
+  )
+  return match ? [match.email] : []
+}
+
+function accountLabel(email: string): string {
+  const accounts = listAccounts()
+  const acc = accounts.find(a => a.email === email)
+  return acc?.nickname ? acc.nickname : email
+}
+
 // ─── Executors ────────────────────────────────────────────────────────────────
 
-async function execGetInbox(args: Record<string, unknown>): Promise<string> {
-  const token = await getValidAccessToken()
-  if (!token) return 'Error: Gmail not authenticated. Ask the user to reconnect on the integrations page.'
+async function fetchInboxForAccount(email: string, max: number, multiAccount: boolean): Promise<string> {
+  const token = await getValidAccessTokenForAccount(email)
+  if (!token) return `Error: could not authenticate ${email}`
 
-  const max = Math.min(Number(args.maxResults) || 10, 20)
   const listRes = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&labelIds=INBOX`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
-  if (!listRes.ok) return `Error: Gmail API returned ${listRes.status}`
+  if (!listRes.ok) return `Error: Gmail API returned ${listRes.status} for ${email}`
 
   const { messages = [] } = await listRes.json()
-  if (messages.length === 0) return 'No messages found in inbox.'
+  if (messages.length === 0) return multiAccount ? `No messages in ${accountLabel(email)}.` : 'No messages found in inbox.'
 
   const details = await Promise.all(
     (messages as { id: string }[]).map(m =>
@@ -237,65 +267,107 @@ async function execGetInbox(args: Record<string, unknown>): Promise<string> {
     )
   )
 
+  const label = accountLabel(email)
   return details.map(msg => {
     const h = (name: string) =>
       msg.payload?.headers?.find((x: { name: string }) => x.name === name)?.value ?? '(unknown)'
-    return `ID: ${msg.id}\nFrom: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\nSnippet: ${msg.snippet ?? ''}`
+    const accountLine = multiAccount ? `Account: ${label}\n` : ''
+    return `${accountLine}ID: ${msg.id}\nFrom: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\nSnippet: ${msg.snippet ?? ''}`
   }).join('\n\n---\n\n')
 }
 
-async function execReadEmail(args: Record<string, unknown>): Promise<string> {
-  const token = await getValidAccessToken()
-  if (!token) return 'Error: Gmail not authenticated.'
+async function execGetInbox(args: Record<string, unknown>): Promise<string> {
+  const emails = resolveAccount(args.account)
+  if (!emails.length) {
+    if (args.account) return `Error: no account matching "${args.account}". Check /integrations to see connected accounts.`
+    return 'Error: Gmail not authenticated. Ask the user to connect an account on the integrations page.'
+  }
 
+  const max = Math.min(Number(args.maxResults) || 10, 20)
+  const multiAccount = emails.length > 1
+  const results = await Promise.all(emails.map(e => fetchInboxForAccount(e, max, multiAccount)))
+  return results.join('\n\n===\n\n')
+}
+
+async function execReadEmail(args: Record<string, unknown>): Promise<string> {
   const id = String(args.id ?? '')
   if (!id) return 'Error: message id is required.'
   if (!/^[a-zA-Z0-9]+$/.test(id)) return 'Error: invalid message id.'
 
-  const res = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  )
-  if (!res.ok) return `Error: Gmail API returned ${res.status}`
+  const emails = resolveAccount(args.account)
+  if (!emails.length) {
+    if (args.account) return `Error: no account matching "${args.account}".`
+    return 'Error: Gmail not authenticated.'
+  }
 
-  const msg = await res.json()
-  const h = (name: string) =>
-    msg.payload?.headers?.find((x: { name: string }) => x.name === name)?.value ?? '(unknown)'
+  for (const email of emails) {
+    const token = await getValidAccessTokenForAccount(email)
+    if (!token) continue
 
-  const body = decodeGmailBody(msg.payload).slice(0, 8000)
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!res.ok) continue
 
-  return `From: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\n\n${body || '(no readable body)'}`
+    const msg = await res.json()
+    const h = (name: string) =>
+      msg.payload?.headers?.find((x: { name: string }) => x.name === name)?.value ?? '(unknown)'
+    const body = decodeGmailBody(msg.payload).slice(0, 8000)
+    return `From: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\n\n${body || '(no readable body)'}`
+  }
+
+  return 'Error: message not found.'
 }
 
 async function execGetCalendarEvents(args: Record<string, unknown>): Promise<string> {
-  const token = await getValidAccessToken()
-  if (!token) return 'Error: Calendar not authenticated. Ask the user to reconnect on the integrations page.'
+  const emails = resolveAccount(args.account)
+  if (!emails.length) {
+    if (args.account) return `Error: no account matching "${args.account}".`
+    return 'Error: Calendar not authenticated. Ask the user to reconnect on the integrations page.'
+  }
 
   const max = Math.min(Number(args.maxResults) || 10, 20)
-  const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
-  url.searchParams.set('timeMin', new Date().toISOString())
-  url.searchParams.set('maxResults', String(max))
-  url.searchParams.set('singleEvents', 'true')
-  url.searchParams.set('orderBy', 'startTime')
+  const multiAccount = emails.length > 1
 
-  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return `Error: Calendar API returned ${res.status}`
+  const fetchForAccount = async (email: string): Promise<string> => {
+    const token = await getValidAccessTokenForAccount(email)
+    if (!token) return `Error: could not authenticate ${email}`
 
-  const { items = [] } = await res.json()
-  if (items.length === 0) return 'No upcoming events found.'
+    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
+    url.searchParams.set('timeMin', new Date().toISOString())
+    url.searchParams.set('maxResults', String(max))
+    url.searchParams.set('singleEvents', 'true')
+    url.searchParams.set('orderBy', 'startTime')
 
-  return items.map((evt: {
-    summary?: string
-    start?: { dateTime?: string; date?: string }
-    end?: { dateTime?: string; date?: string }
-    description?: string
-  }) => {
-    const start = evt.start?.dateTime ?? evt.start?.date ?? '(unknown)'
-    const end   = evt.end?.dateTime   ?? evt.end?.date   ?? '(unknown)'
-    const lines = [`Title: ${evt.summary ?? '(no title)'}`, `Start: ${start}`, `End: ${end}`]
-    if (evt.description) lines.push(`Description: ${evt.description.slice(0, 200)}`)
-    return lines.join('\n')
-  }).join('\n\n---\n\n')
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) return `Error: Calendar API returned ${res.status}`
+
+    const { items = [] } = await res.json()
+    if (items.length === 0) return multiAccount ? `No upcoming events for ${accountLabel(email)}.` : 'No upcoming events found.'
+
+    const label = accountLabel(email)
+    return items.map((evt: {
+      summary?: string
+      start?: { dateTime?: string; date?: string }
+      end?: { dateTime?: string; date?: string }
+      description?: string
+    }) => {
+      const start = evt.start?.dateTime ?? evt.start?.date ?? '(unknown)'
+      const end   = evt.end?.dateTime   ?? evt.end?.date   ?? '(unknown)'
+      const lines = [
+        ...(multiAccount ? [`Account: ${label}`] : []),
+        `Title: ${evt.summary ?? '(no title)'}`,
+        `Start: ${start}`,
+        `End: ${end}`,
+      ]
+      if (evt.description) lines.push(`Description: ${evt.description.slice(0, 200)}`)
+      return lines.join('\n')
+    }).join('\n\n---\n\n')
+  }
+
+  const results = await Promise.all(emails.map(fetchForAccount))
+  return results.join('\n\n===\n\n')
 }
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────

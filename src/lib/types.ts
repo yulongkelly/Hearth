@@ -24,9 +24,15 @@ export interface AppSettings {
   memoryThreshold: number
 }
 
+export interface GoogleAccountInfo {
+  email: string
+  nickname?: string | null
+}
+
 export interface GmailStatus {
   configured: boolean
   connected: boolean
+  accounts: GoogleAccountInfo[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
