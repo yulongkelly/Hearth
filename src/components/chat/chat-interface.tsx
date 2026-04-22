@@ -8,6 +8,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { MessageItem } from './message-item'
 import { cn, generateId, truncate, formatRelativeTime } from '@/lib/utils'
 import type { Conversation, Message } from '@/lib/types'
+import { addUserTool } from '@/lib/user-tools'
+import { ApprovalCard } from './approval-card'
+import type { ToolAccess } from '@/lib/tool-access'
 
 const STORAGE_KEY = 'hearth_conversations'
 const MODEL_KEY = 'hearth_default_model'
@@ -45,6 +48,16 @@ export function ChatInterface() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [googleConnected, setGoogleConnected] = useState(false)
+  const [pendingApprovals, setPendingApprovals] = useState<Array<{ id: string; tool: string; preview: string; risk: ToolAccess }>>([])
+
+  async function handleApproval(id: string, approved: boolean) {
+    setPendingApprovals(prev => prev.filter(a => a.id !== id))
+    await fetch('/api/tools/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, approved }),
+    })
+  }
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -217,6 +230,15 @@ export function ChatInterface() {
               setToolStatus(data.tool_status)
               continue
             }
+            if (data.pending_approval) {
+              setPendingApprovals(prev => [...prev, data.pending_approval])
+              continue
+            }
+            if (data.tool_created) {
+              addUserTool(data.tool_created)
+              window.dispatchEvent(new CustomEvent('hearth:tool-created'))
+              continue
+            }
             if (data.message?.content) {
               setToolStatus(null)
               accumulated += data.message.content
@@ -257,6 +279,7 @@ export function ChatInterface() {
     } finally {
       setIsStreaming(false)
       setToolStatus(null)
+      setPendingApprovals([])
       abortRef.current = null
     }
   }, [input, isStreaming, selectedModel, activeId, conversations, createConversation])
@@ -419,6 +442,13 @@ export function ChatInterface() {
                 />
               ))
             )}
+            {pendingApprovals.map(a => (
+              <ApprovalCard
+                key={a.id}
+                {...a}
+                onRespond={(approved) => handleApproval(a.id, approved)}
+              />
+            ))}
             {toolStatus && (
               <div className="flex items-center gap-2 px-4 py-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
