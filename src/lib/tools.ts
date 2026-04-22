@@ -2,7 +2,37 @@ import { getValidAccessToken, isConfigured, loadTokens } from '@/lib/google-auth
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
-export const TOOL_DEFINITIONS = [
+const CREATE_TOOL_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'create_tool',
+    description: 'Save a reusable tool to the user sidebar. Call ONLY after asking 1-2 clarifying questions to understand the exact requirement. Each tool must have exactly ONE core functionality. If the user asks for something that serves multiple goals, list those goals, explain the single-responsibility rule, and suggest creating separate tools.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name:        { type: 'string', description: 'Short tool name shown in sidebar (e.g. "Summarize emails by date")' },
+        description: { type: 'string', description: 'One sentence describing what this tool does' },
+        icon:        { type: 'string', description: 'One of: Mail, Calendar, FileText, Search, BarChart, List' },
+        parameters: {
+          type: 'array',
+          description: 'Input parameters the user fills in before each run',
+          items: {
+            type: 'object',
+            properties: {
+              name:  { type: 'string', description: 'Parameter key used in prompt template (no spaces)' },
+              label: { type: 'string', description: 'Human-readable label shown in the form' },
+              type:  { type: 'string', description: 'One of: text, date, number' },
+            },
+          },
+        },
+        prompt: { type: 'string', description: 'Prompt template with {paramName} placeholders that will be sent to the AI when the tool runs' },
+      },
+      required: ['name', 'description', 'icon', 'parameters', 'prompt'],
+    },
+  },
+}
+
+const GOOGLE_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
@@ -53,11 +83,13 @@ export const TOOL_DEFINITIONS = [
   },
 ]
 
-// ─── Lazy tool exposure ───────────────────────────────────────────────────────
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_TOOL_DEFINITION]
 
-export function getAvailableTools(): typeof TOOL_DEFINITIONS | null {
+// ─── Tool exposure — create_tool always available; Google tools when connected ─
+
+export function getAvailableTools() {
   if (isConfigured() && loadTokens()) return TOOL_DEFINITIONS
-  return null
+  return [CREATE_TOOL_DEFINITION] as const
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -67,6 +99,7 @@ export function toolStatusLabel(name: string): string {
     get_inbox: 'Checking Gmail...',
     read_email: 'Reading email...',
     get_calendar_events: 'Checking Calendar...',
+    create_tool: 'Creating tool...',
   }
   return labels[name] ?? 'Using a tool...'
 }
