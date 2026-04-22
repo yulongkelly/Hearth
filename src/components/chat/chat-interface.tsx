@@ -10,10 +10,22 @@ import { cn, generateId, truncate, formatRelativeTime } from '@/lib/utils'
 import type { Conversation, Message } from '@/lib/types'
 import { addUserTool } from '@/lib/user-tools'
 import { ApprovalCard } from './approval-card'
+import { QuestionsPopup, type ClarificationQuestion } from './questions-popup'
 import type { ToolAccess } from '@/lib/tool-access'
 
 const STORAGE_KEY = 'hearth_conversations'
 const MODEL_KEY = 'hearth_default_model'
+const SETTINGS_KEY = 'hearth_settings'
+
+function loadMemoryThreshold(): number {
+  if (typeof window === 'undefined') return 0.20
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY)
+    if (!raw) return 0.20
+    const parsed = JSON.parse(raw)
+    return typeof parsed.memoryThreshold === 'number' ? parsed.memoryThreshold : 0.20
+  } catch { return 0.20 }
+}
 
 function loadConversations(): Conversation[] {
   if (typeof window === 'undefined') return []
@@ -49,6 +61,16 @@ export function ChatInterface() {
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const [googleConnected, setGoogleConnected] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<Array<{ id: string; tool: string; preview: string; risk: ToolAccess }>>([])
+  const [pendingQuestions, setPendingQuestions] = useState<{ id: string; questions: ClarificationQuestion[] } | null>(null)
+
+  async function handleAnswers(id: string, answers: string[]) {
+    setPendingQuestions(null)
+    await fetch('/api/tools/answers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, answers }),
+    })
+  }
 
   async function handleApproval(id: string, approved: boolean) {
     setPendingApprovals(prev => prev.filter(a => a.id !== id))
@@ -204,7 +226,7 @@ export function ChatInterface() {
       const res = await fetch('/api/ollama/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: selectedModel, messages: ollamaMessages }),
+        body: JSON.stringify({ model: selectedModel, messages: ollamaMessages, memoryThreshold: loadMemoryThreshold() }),
         signal: ctrl.signal,
       })
 
@@ -228,6 +250,10 @@ export function ChatInterface() {
             const data = JSON.parse(line)
             if (data.tool_status) {
               setToolStatus(data.tool_status)
+              continue
+            }
+            if (data.pending_questions) {
+              setPendingQuestions(data.pending_questions)
               continue
             }
             if (data.pending_approval) {
@@ -280,6 +306,7 @@ export function ChatInterface() {
       setIsStreaming(false)
       setToolStatus(null)
       setPendingApprovals([])
+      setPendingQuestions(null)
       abortRef.current = null
     }
   }, [input, isStreaming, selectedModel, activeId, conversations, createConversation])
@@ -442,13 +469,6 @@ export function ChatInterface() {
                 />
               ))
             )}
-            {pendingApprovals.map(a => (
-              <ApprovalCard
-                key={a.id}
-                {...a}
-                onRespond={(approved) => handleApproval(a.id, approved)}
-              />
-            ))}
             {toolStatus && (
               <div className="flex items-center gap-2 px-4 py-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
@@ -459,8 +479,36 @@ export function ChatInterface() {
           </div>
         </ScrollArea>
 
+        {/* Questions popup */}
+        {pendingQuestions && (
+          <QuestionsPopup
+            {...pendingQuestions}
+            onSubmit={(answers) => handleAnswers(pendingQuestions.id, answers)}
+          />
+        )}
+
+        {/* Approval popup */}
+        {!pendingQuestions && pendingApprovals.length > 0 && (
+          <div className="border-t border-border bg-card">
+            <div className="px-3 pt-2 pb-1">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Waiting for approval
+              </p>
+            </div>
+            <div className="space-y-2 px-3 pb-3">
+              {pendingApprovals.map(a => (
+                <ApprovalCard
+                  key={a.id}
+                  {...a}
+                  onRespond={(approved) => handleApproval(a.id, approved)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Input area */}
-        <div className="border-t border-border p-4">
+        <div className={pendingQuestions || pendingApprovals.length > 0 ? 'hidden' : 'border-t border-border p-4'}>
           <div className="flex items-end gap-2 rounded-xl border border-border bg-card p-2">
             <Textarea
               ref={textareaRef}

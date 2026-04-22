@@ -5,6 +5,9 @@ import { getAvailableTools, executeTool, toolStatusLabel } from '@/lib/tools'
 import type { UserTool, ToolParameter } from '@/lib/user-tools'
 import { getToolAccess, buildPreview } from '@/lib/tool-access'
 import { waitForApproval } from '@/lib/approval-store'
+import { waitForAnswers } from '@/lib/questions-store'
+import { readMemory, readMemoryTrimmed, addEntry, replaceEntry, removeEntry } from '@/lib/memory-store'
+import type { MemoryTarget } from '@/lib/memory-store'
 
 const NDJSON_HEADERS = {
   'Content-Type': 'application/x-ndjson',
@@ -17,11 +20,9 @@ const MAX_TOOL_ITERATIONS = 5
 
 const SYSTEM_MESSAGE = `You have access to the user's Gmail and Google Calendar via function tools. When the user asks about their email, inbox, or calendar events, ALWAYS call the appropriate tool to fetch real data — do not say you cannot access these services.
 
-You can also create reusable sidebar tools using the create_tool function. Before calling create_tool you MUST:
-1. Ask 1–2 clarifying questions about what the tool should do.
-2. Confirm each parameter's name, label, and type with the user. For date parameters, explicitly ask whether they want a full date (YYYY-MM-DD picked from a calendar), a year only, a month/year, or a relative value like "last week". Use type "date" only for full calendar dates, "text" for relative/freeform, "number" for numeric values.
-3. Show the user the planned parameter list and prompt template before saving — let them confirm or adjust.
-Each tool must have ONE core functionality. If a user describes multiple goals, list them and suggest separate tools.`
+You can create reusable sidebar tools using the create_tool function. Before calling create_tool you MUST call ask_clarification — do NOT write questions as plain text in the chat. ask_clarification shows a structured popup with clickable options. Ask about: what the tool should do, how parameters should work, and what the output should look like. IMPORTANT parameter type mapping: if the user chooses a calendar/date picker option → use type "date"; if they choose relative text like "last week" → use type "text"; numeric values → use type "number". Each tool must have ONE core functionality. If a user describes multiple goals, use ask_clarification to help them choose one.
+
+You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Save when: the user states a preference or habit, corrects you, shares personal details (name, role, timezone, tech stack), or you learn a stable convention about their workflow. Do NOT save: task progress, session outcomes, completed TODOs, or transient data.`
 
 function parseArgs(raw: unknown): Record<string, unknown> {
   if (typeof raw === 'object' && raw !== null) return raw as Record<string, unknown>
@@ -40,6 +41,37 @@ export async function POST(req: NextRequest) {
   }
 
   const availableTools = getAvailableTools()
+
+  // Fetch model context window for memory budget calculation
+  let contextLength = 4096
+  try {
+    const showRes = await fetch(`${OLLAMA_BASE_URL}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (showRes.ok) {
+      const info = await showRes.json()
+      contextLength = info?.model_info?.context_length ?? info?.model_info?.['llama.context_length'] ?? 4096
+    }
+  } catch { /* fallback to 4096 */ }
+
+  const memoryThreshold: number = typeof body.memoryThreshold === 'number' ? body.memoryThreshold : 0.20
+  const AVG_CHARS_PER_TOKEN = 4
+  const totalCharBudget = Math.floor(contextLength * memoryThreshold * AVG_CHARS_PER_TOKEN)
+  const perFileBudget = Math.floor(totalCharBudget / 2)
+
+  const memBlock  = readMemoryTrimmed('memory', perFileBudget)
+  const userBlock = readMemoryTrimmed('user', perFileBudget)
+  const memorySection = [
+    memBlock  ? `<memory>\n${memBlock}\n</memory>`                  : '',
+    userBlock ? `<user_profile>\n${userBlock}\n</user_profile>` : '',
+  ].filter(Boolean).join('\n\n')
+
+  const fullSystemMessage = memorySection
+    ? SYSTEM_MESSAGE + '\n\n' + memorySection
+    : SYSTEM_MESSAGE
 
   const { readable, writable } = new TransformStream()
   const writer = writable.getWriter()
@@ -70,7 +102,7 @@ export async function POST(req: NextRequest) {
   ;(async () => {
     try {
       const hasSystem = messages.some((m: OllamaChatMessageWithTools) => m.role === 'system')
-      const systemMsg: OllamaChatMessageWithTools = { role: 'system', content: SYSTEM_MESSAGE }
+      const systemMsg: OllamaChatMessageWithTools = { role: 'system', content: fullSystemMessage }
       let loopMessages: OllamaChatMessageWithTools[] = hasSystem ? [...messages] : [systemMsg, ...messages]
 
       for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -100,6 +132,30 @@ export async function POST(req: NextRequest) {
         const results = await Promise.all(
           assistantMsg.tool_calls.map(async tc => {
             const args = parseArgs(tc.function.arguments)
+
+            // ── memory: read/write persistent memory files ────────────────────
+            if (tc.function.name === 'memory') {
+              writeLine({ tool_status: toolStatusLabel('memory') })
+              const { action, target, content = '', old_content = '' } = args as Record<string, string>
+              const t = (target === 'memory' || target === 'user') ? target as MemoryTarget : 'memory'
+              switch (action) {
+                case 'read':    return readMemory(t)
+                case 'add':     return addEntry(t, content)
+                case 'replace': return replaceEntry(t, old_content, content)
+                case 'remove':  return removeEntry(t, old_content)
+                default:        return 'Error: unknown memory action'
+              }
+            }
+
+            // ── ask_clarification: show question popup, wait for answers ─────
+            if (tc.function.name === 'ask_clarification') {
+              const questions = (args.questions as Array<{ question: string; options: string[] }>) ?? []
+              const id = crypto.randomUUID()
+              writeLine({ pending_questions: { id, questions } })
+              const answers = await waitForAnswers(id)
+              return questions.map((q, i) => `Q: ${q.question}\nA: ${answers[i] ?? '(no answer)'}`).join('\n\n')
+            }
+
             const access = getToolAccess(tc.function.name)
 
             // ── Safety gate: pause for user approval on write/destructive tools ──

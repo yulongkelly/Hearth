@@ -188,7 +188,7 @@ export function ToolPage({ id }: { id: string }) {
                   <div key={p.name} className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">{p.label}</label>
                     <Input
-                      type={p.type === 'date' ? 'date' : p.type === 'number' ? 'number' : 'text'}
+                      type={p.type === 'number' ? 'number' : (p.type === 'date' || /date/i.test(p.name) || /date/i.test(p.label)) ? 'date' : 'text'}
                       value={params[p.name] ?? ''}
                       onChange={e => setParams(prev => ({ ...prev, [p.name]: e.target.value }))}
                       disabled={running}

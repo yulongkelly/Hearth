@@ -1,6 +1,8 @@
 const TIMEOUT_MS = 5 * 60 * 1000
 
-const pending = new Map<string, (approved: boolean) => void>()
+const g = global as typeof globalThis & { __approvalPending?: Map<string, (approved: boolean) => void> }
+if (!g.__approvalPending) g.__approvalPending = new Map()
+const pending = g.__approvalPending
 
 export function waitForApproval(id: string): Promise<boolean> {
   return new Promise(resolve => {

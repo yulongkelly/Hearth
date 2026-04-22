@@ -154,6 +154,41 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        {/* Memory */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Memory</CardTitle>
+            <CardDescription>Control how much of the model&apos;s context window is reserved for persistent memory.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium">Memory Context</label>
+                <span className="text-xs text-muted-foreground font-mono">{Math.round(settings.memoryThreshold * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={5}
+                max={50}
+                step={5}
+                value={Math.round(settings.memoryThreshold * 100)}
+                onChange={e => update('memoryThreshold', Number(e.target.value) / 100)}
+                className="w-full accent-primary"
+              />
+              <p className="text-xs text-muted-foreground">
+                How much of the model&apos;s context window to use for memory. Lower values leave more room for conversation. Default: 20%.
+              </p>
+            </div>
+            <Separator />
+            <Link href="/memory">
+              <Button size="sm" variant="outline" className="gap-1.5">
+                <ExternalLink className="h-3.5 w-3.5" />
+                Review &amp; Edit Memory
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+
         {/* About */}
         <Card>
           <CardHeader>

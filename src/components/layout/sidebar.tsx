@@ -22,6 +22,7 @@ const navItems = [
   { href: '/chat', icon: MessageSquare, label: 'Chat' },
   { href: '/models', icon: Cpu, label: 'Models' },
   { href: '/integrations', icon: Plug2, label: 'Connected Apps' },
+  { href: '/memory', icon: Brain, label: 'Memory' },
 ]
 
 const bottomItems = [

@@ -21,6 +21,7 @@ export interface AppSettings {
   fontSize: 'sm' | 'md' | 'lg'
   streamingEnabled: boolean
   systemPrompt: string
+  memoryThreshold: number
 }
 
 export interface GmailStatus {
@@ -35,4 +36,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 'md',
   streamingEnabled: true,
   systemPrompt: 'You are a helpful, harmless, and honest AI assistant.',
+  memoryThreshold: 0.20,
 }

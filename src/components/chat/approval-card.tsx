@@ -25,7 +25,7 @@ export function ApprovalCard({ tool, preview, risk, onRespond }: ApprovalCardPro
 
   return (
     <div className={cn(
-      'mx-4 my-2 rounded-lg border p-4 space-y-3',
+      'rounded-lg border p-4 space-y-3',
       isDestructive
         ? 'border-destructive/40 bg-destructive/5'
         : 'border-amber-500/40 bg-amber-500/5',

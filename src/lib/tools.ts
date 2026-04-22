@@ -32,6 +32,69 @@ const CREATE_TOOL_DEFINITION = {
   },
 }
 
+const MEMORY_TOOL_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'memory',
+    description: `Manage your persistent memory across sessions. Use this to remember facts about the user and your environment.
+
+WHEN TO SAVE: user states a preference or habit, corrects you, shares personal details (name, role, timezone, tech stack), you learn a project convention or API quirk.
+WHEN NOT TO SAVE: task progress, session outcomes, completed TODOs, raw data dumps.
+
+Proactively save useful facts — do not wait to be asked.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['add', 'replace', 'remove', 'read'],
+          description: 'add: append new entry. replace: update existing entry. remove: delete entry. read: view current memory.',
+        },
+        target: {
+          type: 'string',
+          enum: ['memory', 'user'],
+          description: 'memory = agent facts, conventions, environment. user = personal profile, preferences, communication style.',
+        },
+        content: {
+          type: 'string',
+          description: 'New entry to add, or replacement text for replace action.',
+        },
+        old_content: {
+          type: 'string',
+          description: 'For replace/remove: the existing text to match (substring match).',
+        },
+      },
+      required: ['action', 'target'],
+    },
+  },
+}
+
+const ASK_CLARIFICATION_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'ask_clarification',
+    description: 'Ask the user clarifying questions using a structured popup UI with clickable options. ALWAYS use this instead of writing questions as plain text in the chat. Max 3 questions, each with 2–4 options the user can pick from.',
+    parameters: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          description: '1–3 questions to show the user, each with selectable options',
+          items: {
+            type: 'object',
+            properties: {
+              question: { type: 'string', description: 'The question to ask' },
+              options:  { type: 'array', items: { type: 'string' }, description: '2–4 answer options to choose from' },
+            },
+            required: ['question', 'options'],
+          },
+        },
+      },
+      required: ['questions'],
+    },
+  },
+}
+
 const GOOGLE_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
@@ -83,13 +146,14 @@ const GOOGLE_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_TOOL_DEFINITION]
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_TOOL_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
 
-// ─── Tool exposure — create_tool always available; Google tools when connected ─
+// ─── Tool exposure — memory + create_tool + ask_clarification always; Google tools when connected ─
 
 export function getAvailableTools() {
+  const always = [MEMORY_TOOL_DEFINITION, CREATE_TOOL_DEFINITION, ASK_CLARIFICATION_DEFINITION] as const
   if (isConfigured() && loadTokens()) return TOOL_DEFINITIONS
-  return [CREATE_TOOL_DEFINITION] as const
+  return always
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -100,6 +164,7 @@ export function toolStatusLabel(name: string): string {
     read_email: 'Reading email...',
     get_calendar_events: 'Checking Calendar...',
     create_tool: 'Creating tool...',
+    memory: 'Updating memory…',
   }
   return labels[name] ?? 'Using a tool...'
 }
