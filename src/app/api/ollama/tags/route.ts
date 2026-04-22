@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { OLLAMA_BASE_URL } from '@/lib/ollama'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
