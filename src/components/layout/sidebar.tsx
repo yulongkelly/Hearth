@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
   MessageSquare,
@@ -10,9 +11,11 @@ import {
   Settings,
   Brain,
   Smartphone,
+  Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+import { loadUserTools } from '@/lib/user-tools'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -28,6 +31,14 @@ const bottomItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const [hasTools, setHasTools] = useState(false)
+
+  useEffect(() => {
+    setHasTools(loadUserTools().length > 0)
+    const handler = () => setHasTools(loadUserTools().length > 0)
+    window.addEventListener('hearth:tool-created', handler)
+    return () => window.removeEventListener('hearth:tool-created', handler)
+  }, [])
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -40,7 +51,7 @@ export function Sidebar() {
         </div>
 
         {/* Main nav */}
-        <nav className="flex flex-1 flex-col items-center gap-1 py-4">
+        <nav className="flex flex-1 flex-col items-center gap-1 py-4 overflow-y-auto">
           {navItems.map(({ href, icon: Icon, label }) => {
             const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
             return (
@@ -63,6 +74,27 @@ export function Sidebar() {
               </Tooltip>
             )
           })}
+
+          {/* Tools hub — shown once any tool exists */}
+          {hasTools && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/tools"
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                    pathname.startsWith('/tools')
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                  )}
+                  aria-label="Tools"
+                >
+                  <Wrench className="h-5 w-5" />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right">Tools</TooltipContent>
+            </Tooltip>
+          )}
         </nav>
 
         {/* Bottom nav */}
