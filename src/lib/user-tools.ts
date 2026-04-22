@@ -2,6 +2,7 @@ export interface ToolParameter {
   name: string
   label: string
   type: 'text' | 'date' | 'number'
+  defaultValue?: string
 }
 
 export interface ToolRun {

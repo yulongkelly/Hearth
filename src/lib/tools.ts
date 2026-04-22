@@ -19,9 +19,10 @@ const CREATE_TOOL_DEFINITION = {
           items: {
             type: 'object',
             properties: {
-              name:  { type: 'string', description: 'Parameter key used in prompt template (no spaces)' },
-              label: { type: 'string', description: 'Human-readable label shown in the form' },
-              type:  { type: 'string', description: 'One of: text, date, number' },
+              name:         { type: 'string', description: 'Parameter key used in prompt template (no spaces)' },
+              label:        { type: 'string', description: 'Human-readable label shown in the form' },
+              type:         { type: 'string', description: 'One of: text, date, number' },
+              defaultValue: { type: 'string', description: 'Pre-filled value shown when the tool opens. Use the most common value (e.g. today\'s date in YYYY-MM-DD for a date field, a typical range like "last 7 days" for text).' },
             },
           },
         },

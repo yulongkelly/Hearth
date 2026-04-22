@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
 import {
   loadUserTools, deleteUserTool, addToolRun,
@@ -54,7 +55,7 @@ function RunHistoryItem({ run }: { run: ToolRun }) {
       </button>
       {open && (
         <div className="border-t border-border px-3 py-2">
-          <p className="whitespace-pre-wrap text-xs text-foreground leading-relaxed">{run.result}</p>
+          <Markdown content={run.result} />
         </div>
       )}
     </div>
@@ -75,7 +76,7 @@ export function ToolPage({ id }: { id: string }) {
     setTool(found)
     if (found) {
       const defaults: Record<string, string> = {}
-      found.parameters.forEach(p => { defaults[p.name] = '' })
+      found.parameters.forEach(p => { defaults[p.name] = p.defaultValue ?? '' })
       setParams(defaults)
     }
   }, [id])
@@ -211,13 +212,17 @@ export function ToolPage({ id }: { id: string }) {
             </Button>
           </div>
 
-          {/* Streaming result */}
+          {/* Result */}
           {result !== null && (
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Result</p>
-              <p className={cn('whitespace-pre-wrap text-sm leading-relaxed', running && 'after:inline-block after:w-1 after:h-3.5 after:bg-foreground after:animate-pulse after:ml-0.5 after:align-middle')}>
-                {result || ' '}
-              </p>
+              {running ? (
+                <p className="whitespace-pre-wrap text-sm leading-relaxed after:inline-block after:w-1 after:h-3.5 after:bg-foreground after:animate-pulse after:ml-0.5 after:align-middle">
+                  {result || ' '}
+                </p>
+              ) : (
+                <Markdown content={result} />
+              )}
             </div>
           )}
 

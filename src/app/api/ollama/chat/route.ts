@@ -22,6 +22,8 @@ const SYSTEM_MESSAGE = `You have access to the user's Gmail and Google Calendar 
 
 You can create reusable sidebar tools using the create_tool function. Before calling create_tool you MUST call ask_clarification — do NOT write questions as plain text in the chat. ask_clarification shows a structured popup with clickable options. Ask about: what the tool should do, how parameters should work, and what the output should look like. IMPORTANT parameter type mapping: if the user chooses a calendar/date picker option → use type "date"; if they choose relative text like "last week" → use type "text"; numeric values → use type "number". Each tool must have ONE core functionality. If a user describes multiple goals, use ask_clarification to help them choose one.
 
+After clarifying, DEMONSTRATE the tool before saving it: call the relevant underlying tools (get_calendar_events, get_inbox, etc.) with realistic values and show the user a formatted sample result. ONLY after showing the live output should you call create_tool. This lets the user confirm the result looks right before the tool is saved. Never call create_tool without first running a demo. When the tool has date parameters, set sensible defaultValues (e.g. today's date in YYYY-MM-DD format).
+
 You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Save when: the user states a preference or habit, corrects you, shares personal details (name, role, timezone, tech stack), or you learn a stable convention about their workflow. Do NOT save: task progress, session outcomes, completed TODOs, or transient data.`
 
 function parseArgs(raw: unknown): Record<string, unknown> {
@@ -187,7 +189,7 @@ export async function POST(req: NextRequest) {
                 runs: [],
               }
               writeLine({ tool_created: newTool })
-              return 'Tool created and saved to the sidebar.'
+              return `Tool "${newTool.name}" saved to the sidebar. The output I just showed you is what it produces each time it runs.`
             }
 
             writeLine({ tool_status: toolStatusLabel(tc.function.name) })
