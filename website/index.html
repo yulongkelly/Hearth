@@ -142,6 +142,9 @@
         </button>
       </div>
 
+      <!-- OS security warnings -->
+      <div id="osWarning" class="hidden max-w-md mx-auto mb-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60 leading-relaxed"></div>
+
       <!-- Other platforms -->
       <div class="flex flex-wrap items-center justify-center gap-3 mb-4">
         <a href="#" onclick="return downloadPlatform('mac')" class="platform-btn flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-white/70 hover:text-white">
@@ -432,9 +435,23 @@
     // Wire up all config-driven values on load
     (function init() {
       // Download button labels
-      const { label } = DOWNLOADS[detectPlatform()]
+      const platform = detectPlatform()
+      const { label } = DOWNLOADS[platform]
       document.getElementById('primaryLabel').textContent = label
       document.getElementById('ctaLabel').textContent     = label
+
+      // OS security warnings
+      const warnings = {
+        windows: '⚠️ Windows may show a SmartScreen warning. Click <strong>More info → Run anyway</strong> to install. This happens because the app isn\'t code-signed yet.',
+        mac: '⚠️ macOS will block the app on first open. Right-click <strong>Hearth.dmg → Open</strong>, then click <strong>Open</strong> in the dialog. Or go to <strong>System Settings → Privacy & Security → Open Anyway</strong>.',
+        linux: '',
+      }
+      const warning = warnings[platform]
+      if (warning) {
+        const el = document.getElementById('osWarning')
+        el.innerHTML = warning
+        el.classList.remove('hidden')
+      }
 
       // GitHub links
       const r = HEARTH_CONFIG.repoUrl
