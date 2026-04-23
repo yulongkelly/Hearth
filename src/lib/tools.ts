@@ -2,6 +2,8 @@ import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens }
 import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
 import { listEvents, searchEvents } from '@/lib/event-store'
 import type { HearthEvent } from '@/lib/event-store'
+import { getBotState, sendWechatMessage } from '@/lib/wechat-bot'
+import { queryMessages } from '@/lib/wechat-store'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -249,15 +251,50 @@ const PLAID_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+const WECHAT_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_wechat_messages',
+      description: 'Read recent WeChat messages received while Hearth was running. Filter by contact name and/or number of days.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', description: 'Contact display name to filter by. Omit to get all recent messages.' },
+          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
+          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_wechat_message',
+      description: 'Send a WeChat message to a contact by their display name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', description: "The contact's WeChat display name." },
+          message: { type: 'string', description: 'The message text to send.' },
+        },
+        required: ['contact', 'message'],
+      },
+    },
+  },
+]
+
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
-  const google = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
-  const plaid  = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
-  return [...always, ...google, ...plaid]
+  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
+  const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
+  const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
+  const wechat  = getBotState().status === 'connected' ? WECHAT_TOOL_DEFINITIONS : []
+  return [...always, ...google, ...plaid, ...wechat]
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -268,10 +305,12 @@ export function toolStatusLabel(name: string): string {
     read_email:          'Reading email...',
     send_email:          'Sending email...',
     get_calendar_events: 'Checking Calendar...',
-    get_transactions:    'Fetching transactions...',
-    query_events:        'Searching activity history...',
-    create_workflow:     'Creating workflow...',
-    memory:              'Updating memory…',
+    get_transactions:      'Fetching transactions...',
+    query_events:          'Searching activity history...',
+    get_wechat_messages:   'Reading WeChat messages...',
+    send_wechat_message:   'Sending WeChat message...',
+    create_workflow:       'Creating workflow...',
+    memory:                'Updating memory…',
   }
   return labels[name] ?? 'Using a tool...'
 }
@@ -602,19 +641,44 @@ async function execGetTransactions(args: Record<string, unknown>): Promise<strin
   ].filter(Boolean).join('\n')).join('\n\n---\n\n')
 }
 
+// ─── WeChat executors ─────────────────────────────────────────────────────────
+
+function execGetWechatMessages(args: Record<string, unknown>): string {
+  const contact = args.contact ? String(args.contact) : undefined
+  const days    = Math.min(Number(args.days)  || 7,  90)
+  const limit   = Math.min(Number(args.limit) || 50, 200)
+  const messages = queryMessages({ contact, days, limit })
+  if (!messages.length) return 'No WeChat messages found for the specified filters.'
+  return messages.map(m => [
+    `From: ${m.from}`,
+    m.room ? `Group: ${m.room}` : null,
+    `Time: ${m.timestamp}`,
+    `Message: ${m.text}`,
+  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
+}
+
+async function execSendWechatMessage(args: Record<string, unknown>): Promise<string> {
+  const contact = String(args.contact ?? '')
+  const message = String(args.message ?? '')
+  if (!contact || !message) return 'Error: contact and message are required.'
+  return sendWechatMessage(contact, message)
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
   const args = parseArgs(rawArgs)
   try {
     switch (name) {
-      case 'get_inbox':           return await execGetInbox(args)
-      case 'read_email':          return await execReadEmail(args)
-      case 'send_email':          return await execSendEmail(args)
-      case 'get_calendar_events': return await execGetCalendarEvents(args)
-      case 'get_transactions':    return await execGetTransactions(args)
-      case 'query_events':        return execQueryEvents(args)
-      default:                    return `Error: unknown tool "${name}"`
+      case 'get_inbox':             return await execGetInbox(args)
+      case 'read_email':            return await execReadEmail(args)
+      case 'send_email':            return await execSendEmail(args)
+      case 'get_calendar_events':   return await execGetCalendarEvents(args)
+      case 'get_transactions':      return await execGetTransactions(args)
+      case 'query_events':          return execQueryEvents(args)
+      case 'get_wechat_messages':   return execGetWechatMessages(args)
+      case 'send_wechat_message':   return await execSendWechatMessage(args)
+      default:                      return `Error: unknown tool "${name}"`
     }
   } catch {
     return `Error: tool "${name}" failed. Please try again.`

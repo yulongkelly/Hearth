@@ -6,6 +6,7 @@ import { Plug2, Send, Hash } from 'lucide-react'
 import { GmailCard } from '@/components/integrations/gmail-card'
 import { CalendarCard } from '@/components/integrations/calendar-card'
 import { PlaidCard } from '@/components/integrations/plaid-card'
+import { WechatCard } from '@/components/integrations/wechat-card'
 import { ComingSoonCard } from '@/components/integrations/coming-soon-card'
 
 function IntegrationsContent() {
@@ -27,6 +28,7 @@ function IntegrationsContent() {
         <GmailCard initialError={oauthError} />
         <CalendarCard initialError={oauthError} />
         <PlaidCard />
+        <WechatCard />
 
         <ComingSoonCard
           icon={Send}
