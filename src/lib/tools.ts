@@ -1,4 +1,5 @@
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
+import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -6,7 +7,7 @@ const CREATE_WORKFLOW_DEFINITION = {
   type: 'function' as const,
   function: {
     name: 'create_workflow',
-    description: `Create a reusable workflow tool saved to the sidebar. Call ONLY after ask_clarification. ONLY use these exact step names — no others: get_calendar_events, get_inbox, read_email, merge_lists, detect_conflicts, filter_events, summarize. Output ONLY a valid JSON object. Max 8 steps.`,
+    description: `Create a reusable workflow tool saved to the sidebar. Call ONLY after ask_clarification. ONLY use these exact step names — no others: get_calendar_events, get_inbox, read_email, get_transactions, merge_lists, detect_conflicts, filter_events, summarize. Output ONLY a valid JSON object. Max 8 steps.`,
     parameters: {
       type: 'object',
       properties: {
@@ -204,26 +205,52 @@ const GOOGLE_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+const PLAID_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_transactions',
+      description: 'Get recent bank transactions from linked accounts via Plaid.',
+      parameters: {
+        type: 'object',
+        properties: {
+          days: {
+            type: 'number',
+            description: 'Number of days to look back. Default 30, max 90.',
+          },
+          institution: {
+            type: 'string',
+            description: 'Institution name to filter by (e.g. "Chase"). Omit for all linked accounts.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+]
 
-// ─── Tool exposure — memory + create_workflow + ask_clarification always; Google tools when connected ─
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+
+// ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always = [MEMORY_TOOL_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION] as const
-  if (isConfigured() && loadTokens()) return TOOL_DEFINITIONS
-  return always
+  const always = [MEMORY_TOOL_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
+  const google = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
+  const plaid  = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
+  return [...always, ...google, ...plaid]
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
 
 export function toolStatusLabel(name: string): string {
   const labels: Record<string, string> = {
-    get_inbox: 'Checking Gmail...',
-    read_email: 'Reading email...',
-    send_email: 'Sending email...',
+    get_inbox:           'Checking Gmail...',
+    read_email:          'Reading email...',
+    send_email:          'Sending email...',
     get_calendar_events: 'Checking Calendar...',
-    create_workflow: 'Creating workflow...',
-    memory: 'Updating memory…',
+    get_transactions:    'Fetching transactions...',
+    create_workflow:     'Creating workflow...',
+    memory:              'Updating memory…',
   }
   return labels[name] ?? 'Using a tool...'
 }
@@ -460,6 +487,76 @@ async function execSendEmail(args: Record<string, unknown>): Promise<string> {
   return `Email sent to ${to}.`
 }
 
+async function execGetTransactions(args: Record<string, unknown>): Promise<string> {
+  const creds = loadPlaidCredentials()
+  if (!creds) return 'Error: Plaid not configured. Ask the user to set up Plaid on the integrations page.'
+
+  const days        = Math.min(Number(args.days) || 30, 90)
+  const institution = args.institution ? String(args.institution).toLowerCase() : null
+  let items         = listItems()
+  if (!items.length) return 'Error: no bank accounts linked. Ask the user to connect an account on the integrations page.'
+  if (institution) {
+    items = items.filter(i => i.institutionName.toLowerCase().includes(institution))
+    if (!items.length) return `Error: no linked institution matching "${args.institution}".`
+  }
+
+  const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0]
+  const endDate   = new Date().toISOString().split('T')[0]
+  const base      = plaidBaseUrl(creds.env)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allTransactions: any[] = []
+
+  await Promise.all(items.map(async item => {
+    const res = await fetch(`${base}/transactions/get`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id:    creds.clientId,
+        secret:       creds.secret,
+        access_token: item.accessToken,
+        start_date:   startDate,
+        end_date:     endDate,
+        options:      { count: 100 },
+      }),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    const accountMap = Object.fromEntries(item.accounts.map(a => [a.id, a]))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const tx of (data.transactions ?? []) as any[]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const acct = accountMap[tx.account_id] as any
+      allTransactions.push({
+        institution:  item.institutionName,
+        account:      acct ? `${acct.name} ****${acct.mask}` : tx.account_id,
+        date:         tx.date,
+        amount:       -tx.amount,
+        name:         tx.name,
+        merchantName: tx.merchant_name ?? null,
+        category:     tx.category?.[0] ?? null,
+        pending:      tx.pending,
+      })
+    }
+  }))
+
+  if (!allTransactions.length) return 'No transactions found for the specified period.'
+
+  allTransactions.sort((a, b) => b.date.localeCompare(a.date))
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return allTransactions.map((t: any) => [
+    `Institution: ${t.institution}`,
+    `Account: ${t.account}`,
+    `Date: ${t.date}`,
+    `Amount: ${t.amount >= 0 ? '+' : ''}${Number(t.amount).toFixed(2)}`,
+    `Name: ${t.name}`,
+    t.merchantName ? `Merchant: ${t.merchantName}` : null,
+    t.category     ? `Category: ${t.category}`     : null,
+    `Pending: ${t.pending}`,
+  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
@@ -470,6 +567,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'read_email':          return await execReadEmail(args)
       case 'send_email':          return await execSendEmail(args)
       case 'get_calendar_events': return await execGetCalendarEvents(args)
+      case 'get_transactions':    return await execGetTransactions(args)
       default:                    return `Error: unknown tool "${name}"`
     }
   } catch {

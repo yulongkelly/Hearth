@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Plug2, Send, Hash } from 'lucide-react'
 import { GmailCard } from '@/components/integrations/gmail-card'
 import { CalendarCard } from '@/components/integrations/calendar-card'
+import { PlaidCard } from '@/components/integrations/plaid-card'
 import { ComingSoonCard } from '@/components/integrations/coming-soon-card'
 
 function IntegrationsContent() {
@@ -24,6 +25,8 @@ function IntegrationsContent() {
         </p>
 
         <GmailCard initialError={oauthError} />
+        <CalendarCard initialError={oauthError} />
+        <PlaidCard />
 
         <ComingSoonCard
           icon={Send}
@@ -32,7 +35,6 @@ function IntegrationsContent() {
           name="Telegram"
           description="Get message summaries and send replies via AI."
         />
-        <CalendarCard initialError={oauthError} />
         <ComingSoonCard
           icon={Hash}
           iconBg="bg-purple-500/10"
