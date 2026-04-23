@@ -65,15 +65,20 @@ function LinkButton({ onLinked, label }: { onLinked: () => void; label: string }
   async function handleClick() {
     setFetching(true)
     setError(null)
-    const res = await fetch('/api/plaid/link-token', { method: 'POST' })
-    const data = await res.json()
-    if (!res.ok || !data.link_token) {
-      setError(data.error ?? 'Failed to start Plaid Link')
+    try {
+      const res  = await fetch('/api/plaid/link-token', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.link_token) {
+        setError(data.error ?? 'Failed to start Plaid Link')
+        setFetching(false)
+        return
+      }
+      setLinkToken(data.link_token)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start Plaid Link')
+    } finally {
       setFetching(false)
-      return
     }
-    setLinkToken(data.link_token)
-    setFetching(false)
   }
 
   return (
@@ -92,7 +97,7 @@ function LinkButton({ onLinked, label }: { onLinked: () => void; label: string }
 export function PlaidCard() {
   const [status, setStatus]         = useState<PlaidStatus | null>(null)
   const [showSetup, setShowSetup]   = useState(false)
-  const [env, setEnv]               = useState<'sandbox' | 'development' | 'production'>('sandbox')
+  const [env, setEnv]               = useState<'sandbox' | 'production'>('sandbox')
   const [clientId, setClientId]     = useState('')
   const [secret, setSecret]         = useState('')
   const [saving, setSaving]         = useState(false)
@@ -129,7 +134,7 @@ export function PlaidCard() {
     refresh()
   }
 
-  const envLabel = { sandbox: 'Sandbox', development: 'Development', production: 'Production' }
+  const envLabel = { sandbox: 'Sandbox', production: 'Production' }
 
   return (
     <Card>
@@ -177,9 +182,8 @@ export function PlaidCard() {
                 onChange={e => setEnv(e.target.value as typeof env)}
                 className="w-full h-9 rounded-md border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
-                <option value="sandbox">Sandbox (testing)</option>
-                <option value="development">Development (real banks, limited)</option>
-                <option value="production">Production</option>
+                <option value="sandbox">Sandbox (mock data, free)</option>
+                <option value="production">Production (real banks — free trial up to 10 accounts)</option>
               </select>
             </div>
             <div className="space-y-1">

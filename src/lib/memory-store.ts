@@ -1,6 +1,6 @@
-import fs from 'fs'
-import os from 'os'
 import path from 'path'
+import os from 'os'
+import { readEncryptedText, writeEncryptedText } from './secure-storage'
 
 const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
 const MEMORY_DIR  = path.join(HEARTH_DIR, 'memory')
@@ -35,22 +35,12 @@ function filePath(target: MemoryTarget): string {
   return target === 'memory' ? MEMORY_FILE : USER_FILE
 }
 
-function ensureDir() {
-  if (!fs.existsSync(MEMORY_DIR)) {
-    fs.mkdirSync(MEMORY_DIR, { recursive: true, mode: 0o700 })
-  }
-}
-
 function readRaw(target: MemoryTarget): string {
-  try { return fs.readFileSync(filePath(target), 'utf8') } catch { return '' }
+  return readEncryptedText(filePath(target))
 }
 
 function writeAtomic(target: MemoryTarget, content: string) {
-  ensureDir()
-  const fp  = filePath(target)
-  const tmp = fp + '.tmp'
-  fs.writeFileSync(tmp, content, { mode: 0o600, encoding: 'utf8' })
-  fs.renameSync(tmp, fp)
+  writeEncryptedText(filePath(target), content)
 }
 
 function parseEntries(raw: string): string[] {

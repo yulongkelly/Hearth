@@ -434,11 +434,11 @@ export function ChatInterface() {
           ) : (
             <div className="flex flex-col gap-0.5 p-2">
               {conversations.map(convo => (
-                <button
+                <div
                   key={convo.id}
                   onClick={() => setActiveId(convo.id)}
                   className={cn(
-                    'group flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors',
+                    'group flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left transition-colors',
                     convo.id === activeId
                       ? 'bg-accent text-foreground'
                       : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
@@ -456,7 +456,7 @@ export function ChatInterface() {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                </button>
+                </div>
               ))}
             </div>
           )}

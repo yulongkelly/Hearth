@@ -1,6 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { encryptLine, decryptLine } from './secure-storage'
 
 const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
 const EVENTS_FILE = path.join(HEARTH_DIR, 'events.jsonl')
@@ -36,7 +37,7 @@ export function appendEvent(event: Omit<HearthEvent, 'id' | 'timestamp'>): void 
       timestamp: new Date().toISOString(),
       ...event,
     }
-    fs.appendFileSync(EVENTS_FILE, JSON.stringify(record) + '\n', { mode: 0o600, encoding: 'utf8' })
+    fs.appendFileSync(EVENTS_FILE, encryptLine(record) + '\n', { mode: 0o600, encoding: 'utf8' })
   } catch { /* non-critical — never throw from logging */ }
 }
 
@@ -46,7 +47,7 @@ function readAllEvents(): HearthEvent[] {
     return raw
       .split('\n')
       .filter(Boolean)
-      .map(line => { try { return JSON.parse(line) as HearthEvent } catch { return null } })
+      .map(line => { try { return decryptLine(line) as HearthEvent } catch { return null } })
       .filter((e): e is HearthEvent => e !== null)
   } catch { return [] }
 }

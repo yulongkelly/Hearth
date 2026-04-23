@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { readEncrypted, writeEncrypted } from './secure-storage'
 
 const HEARTH_DIR = path.join(os.homedir(), '.hearth')
 const CREDENTIALS_FILE = path.join(HEARTH_DIR, 'google-credentials.json')
@@ -18,44 +19,28 @@ export interface GoogleAccount extends GoogleTokens {
 
 export type GoogleAccounts = Record<string, GoogleAccount>
 
-function ensureDir() {
-  if (!fs.existsSync(HEARTH_DIR)) {
-    fs.mkdirSync(HEARTH_DIR, { recursive: true, mode: 0o700 })
-  }
-}
-
-function writeSecureFile(filePath: string, content: string) {
-  ensureDir()
-  fs.writeFileSync(filePath, content, { mode: 0o600 })
-}
-
-// Read both fields in one parse to avoid TOCTOU between two reads
 function readCredentials(): { clientId: string; clientSecret: string } | null {
-  try {
-    const raw = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'))
-    if (raw?.clientId && raw?.clientSecret) return raw
-    return null
-  } catch { return null }
+  const raw = readEncrypted<{ clientId: string; clientSecret: string }>(CREDENTIALS_FILE)
+  if (raw?.clientId && raw?.clientSecret) return raw
+  return null
 }
 
 export function isConfigured(): boolean {
-  return readCredentials() !== null
+  return fs.existsSync(CREDENTIALS_FILE)
 }
 
 export function saveCredentials(clientId: string, clientSecret: string) {
-  writeSecureFile(CREDENTIALS_FILE, JSON.stringify({ clientId, clientSecret }, null, 2))
+  writeEncrypted(CREDENTIALS_FILE, { clientId, clientSecret })
 }
 
 // ─── Multi-account storage ────────────────────────────────────────────────────
 
 export function loadAccounts(): GoogleAccounts {
-  try {
-    return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8'))
-  } catch { return {} }
+  return readEncrypted<GoogleAccounts>(ACCOUNTS_FILE) ?? {}
 }
 
 export function saveAccounts(accounts: GoogleAccounts) {
-  writeSecureFile(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2))
+  writeEncrypted(ACCOUNTS_FILE, accounts)
 }
 
 export function addAccount(email: string, tokens: GoogleTokens, nickname?: string) {
