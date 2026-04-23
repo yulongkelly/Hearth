@@ -2,12 +2,14 @@
 
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plug2, Send, Hash } from 'lucide-react'
+import { Plug2 } from 'lucide-react'
 import { GmailCard } from '@/components/integrations/gmail-card'
 import { CalendarCard } from '@/components/integrations/calendar-card'
 import { PlaidCard } from '@/components/integrations/plaid-card'
 import { WechatCard } from '@/components/integrations/wechat-card'
-import { ComingSoonCard } from '@/components/integrations/coming-soon-card'
+import { QqCard } from '@/components/integrations/qq-card'
+import { TelegramCard } from '@/components/integrations/telegram-card'
+import { DiscordCard } from '@/components/integrations/discord-card'
 
 function IntegrationsContent() {
   const searchParams = useSearchParams()
@@ -29,21 +31,9 @@ function IntegrationsContent() {
         <CalendarCard initialError={oauthError} />
         <PlaidCard />
         <WechatCard />
-
-        <ComingSoonCard
-          icon={Send}
-          iconBg="bg-blue-500/10"
-          iconColor="text-blue-400"
-          name="Telegram"
-          description="Get message summaries and send replies via AI."
-        />
-        <ComingSoonCard
-          icon={Hash}
-          iconBg="bg-purple-500/10"
-          iconColor="text-purple-400"
-          name="Slack"
-          description="Summarize channels and draft replies with local AI."
-        />
+        <QqCard />
+        <TelegramCard />
+        <DiscordCard />
       </div>
     </div>
   )

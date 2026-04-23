@@ -4,6 +4,12 @@ import { listEvents, searchEvents } from '@/lib/event-store'
 import type { HearthEvent } from '@/lib/event-store'
 import { getBotState, sendWechatMessage } from '@/lib/wechat-bot'
 import { queryMessages } from '@/lib/wechat-store'
+import { getQqState, sendQqMessage } from '@/lib/qq-bot'
+import { queryQqMessages } from '@/lib/qq-store'
+import { getTelegramState, sendTelegramMessage } from '@/lib/telegram-bot'
+import { queryTelegramMessages } from '@/lib/telegram-store'
+import { getDiscordState, sendDiscordMessage } from '@/lib/discord-bot'
+import { queryDiscordMessages } from '@/lib/discord-store'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -285,7 +291,110 @@ const WECHAT_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+const QQ_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_qq_messages',
+      description: 'Read recent QQ messages received while Hearth was running. Filter by contact name or QQ number.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', description: 'Contact nickname or QQ number to filter by. Omit for all recent messages.' },
+          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
+          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_qq_message',
+      description: 'Send a QQ message to a contact or group by their QQ number.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target:  { type: 'string', description: "The recipient's QQ number (for private) or group number." },
+          message: { type: 'string', description: 'The message text to send.' },
+        },
+        required: ['target', 'message'],
+      },
+    },
+  },
+]
+
+const TELEGRAM_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_telegram_messages',
+      description: 'Read recent Telegram messages received by the bot while Hearth was running.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', description: 'Username or name to filter by. Omit for all recent messages.' },
+          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
+          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_telegram_message',
+      description: 'Send a Telegram message to a chat ID or @username.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target:  { type: 'string', description: 'Chat ID (numeric) or @username of the recipient.' },
+          message: { type: 'string', description: 'The message text to send.' },
+        },
+        required: ['target', 'message'],
+      },
+    },
+  },
+]
+
+const DISCORD_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'get_discord_messages',
+      description: 'Read recent Discord messages received by the bot while Hearth was running. Filter by user or channel.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contact: { type: 'string', description: 'Username to filter by. Omit for all recent messages.' },
+          channel: { type: 'string', description: 'Channel name to filter by.' },
+          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
+          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'send_discord_message',
+      description: 'Send a message to a Discord channel by channel ID or name.',
+      parameters: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string', description: 'Channel ID or exact channel name.' },
+          message: { type: 'string', description: 'The message text to send.' },
+        },
+        required: ['channel', 'message'],
+      },
+    },
+  },
+]
+
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
@@ -293,8 +402,11 @@ export function getAvailableTools() {
   const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
-  const wechat  = getBotState().status === 'connected' ? WECHAT_TOOL_DEFINITIONS : []
-  return [...always, ...google, ...plaid, ...wechat]
+  const wechat   = getBotState().status === 'connected'    ? WECHAT_TOOL_DEFINITIONS    : []
+  const qq       = getQqState().status === 'connected'      ? QQ_TOOL_DEFINITIONS        : []
+  const telegram = getTelegramState().status === 'connected' ? TELEGRAM_TOOL_DEFINITIONS : []
+  const discord  = getDiscordState().status === 'connected'  ? DISCORD_TOOL_DEFINITIONS  : []
+  return [...always, ...google, ...plaid, ...wechat, ...qq, ...telegram, ...discord]
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -309,6 +421,12 @@ export function toolStatusLabel(name: string): string {
     query_events:          'Searching activity history...',
     get_wechat_messages:   'Reading WeChat messages...',
     send_wechat_message:   'Sending WeChat message...',
+    get_qq_messages:       'Reading QQ messages...',
+    send_qq_message:       'Sending QQ message...',
+    get_telegram_messages: 'Reading Telegram messages...',
+    send_telegram_message: 'Sending Telegram message...',
+    get_discord_messages:  'Reading Discord messages...',
+    send_discord_message:  'Sending Discord message...',
     create_workflow:       'Creating workflow...',
     memory:                'Updating memory…',
   }
@@ -664,6 +782,77 @@ async function execSendWechatMessage(args: Record<string, unknown>): Promise<str
   return sendWechatMessage(contact, message)
 }
 
+// ─── QQ executors ────────────────────────────────────────────────────────────
+
+function execGetQqMessages(args: Record<string, unknown>): string {
+  const contact = args.contact ? String(args.contact) : undefined
+  const days    = Math.min(Number(args.days)  || 7,  90)
+  const limit   = Math.min(Number(args.limit) || 50, 200)
+  const messages = queryQqMessages({ contact, days, limit })
+  if (!messages.length) return 'No QQ messages found for the specified filters.'
+  return messages.map(m => [
+    `From: ${m.from} (${m.uin})`,
+    m.room ? `Group: ${m.room}` : null,
+    `Time: ${m.timestamp}`,
+    `Message: ${m.text}`,
+  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
+}
+
+async function execSendQqMessage(args: Record<string, unknown>): Promise<string> {
+  const target  = String(args.target  ?? '')
+  const message = String(args.message ?? '')
+  if (!target || !message) return 'Error: target and message are required.'
+  return sendQqMessage(target, message)
+}
+
+// ─── Telegram executors ───────────────────────────────────────────────────────
+
+function execGetTelegramMessages(args: Record<string, unknown>): string {
+  const contact = args.contact ? String(args.contact) : undefined
+  const days    = Math.min(Number(args.days)  || 7,  90)
+  const limit   = Math.min(Number(args.limit) || 50, 200)
+  const messages = queryTelegramMessages({ contact, days, limit })
+  if (!messages.length) return 'No Telegram messages found for the specified filters.'
+  return messages.map(m => [
+    `From: ${m.from}`,
+    m.chatTitle ? `Chat: ${m.chatTitle}` : `Chat ID: ${m.chatId}`,
+    `Time: ${m.timestamp}`,
+    `Message: ${m.text}`,
+  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
+}
+
+async function execSendTelegramMessage(args: Record<string, unknown>): Promise<string> {
+  const target  = String(args.target  ?? '')
+  const message = String(args.message ?? '')
+  if (!target || !message) return 'Error: target and message are required.'
+  return sendTelegramMessage(target, message)
+}
+
+// ─── Discord executors ────────────────────────────────────────────────────────
+
+function execGetDiscordMessages(args: Record<string, unknown>): string {
+  const contact = args.contact ? String(args.contact) : undefined
+  const channel = args.channel ? String(args.channel) : undefined
+  const days    = Math.min(Number(args.days)  || 7,  90)
+  const limit   = Math.min(Number(args.limit) || 50, 200)
+  const messages = queryDiscordMessages({ contact, channel, days, limit })
+  if (!messages.length) return 'No Discord messages found for the specified filters.'
+  return messages.map(m => [
+    `From: ${m.from}`,
+    m.guild   ? `Server: ${m.guild}`   : null,
+    m.channel ? `Channel: #${m.channel}` : null,
+    `Time: ${m.timestamp}`,
+    `Message: ${m.text}`,
+  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
+}
+
+async function execSendDiscordMessage(args: Record<string, unknown>): Promise<string> {
+  const channel = String(args.channel ?? '')
+  const message = String(args.message ?? '')
+  if (!channel || !message) return 'Error: channel and message are required.'
+  return sendDiscordMessage(channel, message)
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
@@ -678,6 +867,12 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'query_events':          return execQueryEvents(args)
       case 'get_wechat_messages':   return execGetWechatMessages(args)
       case 'send_wechat_message':   return await execSendWechatMessage(args)
+      case 'get_qq_messages':       return execGetQqMessages(args)
+      case 'send_qq_message':       return await execSendQqMessage(args)
+      case 'get_telegram_messages': return execGetTelegramMessages(args)
+      case 'send_telegram_message': return await execSendTelegramMessage(args)
+      case 'get_discord_messages':  return execGetDiscordMessages(args)
+      case 'send_discord_message':  return await execSendDiscordMessage(args)
       default:                      return `Error: unknown tool "${name}"`
     }
   } catch {
