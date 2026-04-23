@@ -14,6 +14,7 @@ import { ApprovalCard } from './approval-card'
 import { QuestionsPopup, type ClarificationQuestion } from './questions-popup'
 import { WorkflowPlanEditor } from '@/components/tools/workflow-plan-editor'
 import type { ToolAccess } from '@/lib/tool-access'
+import * as ChatStore from '@/lib/chat-store'
 
 const STORAGE_KEY = 'hearth_conversations'
 const MODEL_KEY = 'hearth_default_model'
@@ -51,6 +52,24 @@ function saveConversations(convos: Conversation[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(convos))
 }
 
+// Writes streaming content directly to localStorage without going through React state.
+// This ensures content is persisted even when the component is unmounted (user navigated away).
+function persistStreamingContent(convoId: string, content: string): void {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const convos = JSON.parse(raw)
+    const updated = convos.map((c: Conversation) => {
+      if (c.id !== convoId) return c
+      const msgs = [...c.messages]
+      const last = msgs[msgs.length - 1]
+      if (last?.role === 'assistant') msgs[msgs.length - 1] = { ...last, content }
+      return { ...c, messages: msgs, updatedAt: new Date().toISOString() }
+    })
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+  } catch {}
+}
+
 export function ChatInterface() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -69,6 +88,7 @@ export function ChatInterface() {
 
   async function handleAnswers(id: string, answers: string[]) {
     setPendingQuestions(null)
+    ChatStore.setPendingQuestions(null)
     await fetch('/api/tools/answers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -78,6 +98,7 @@ export function ChatInterface() {
 
   async function handleApproval(id: string, approved: boolean) {
     setPendingApprovals(prev => prev.filter(a => a.id !== id))
+    ChatStore.removePendingApproval(id)
     await fetch('/api/tools/approve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -92,12 +113,45 @@ export function ChatInterface() {
 
   useEffect(() => {
     const saved = loadConversations()
-    if (saved.length > 0) {
-      setConversations(saved)
+    const stream = ChatStore.getActiveStream()
+    setConversations(saved)
+    if (stream) {
+      // Resume display of an in-progress stream started before navigation
+      setActiveId(stream.convoId)
+      setIsStreaming(true)
+      setToolStatus(stream.toolStatus)
+      setPendingApprovals(stream.pendingApprovals)
+      setPendingQuestions(stream.pendingQuestions)
+      setPendingTool(stream.pendingTool)
+      setPendingWorkflow(stream.pendingWorkflow)
+    } else if (saved.length > 0) {
       setActiveId(saved[0].id)
     }
     const savedModel = localStorage.getItem(MODEL_KEY) || ''
     if (savedModel) setSelectedModel(savedModel)
+  }, [])
+
+  // Sync streaming state from global store (fires when stream state changes)
+  useEffect(() => {
+    return ChatStore.subscribe(() => {
+      const stream = ChatStore.getActiveStream()
+      setIsStreaming(!!stream)
+      if (stream) {
+        setToolStatus(stream.toolStatus)
+        setPendingApprovals(stream.pendingApprovals)
+        setPendingQuestions(stream.pendingQuestions)
+        setPendingTool(stream.pendingTool)
+        setPendingWorkflow(stream.pendingWorkflow)
+      } else {
+        setToolStatus(null)
+        setPendingApprovals([])
+        setPendingQuestions(null)
+        setPendingTool(null)
+        setPendingWorkflow(null)
+        // Reload from localStorage to pick up content written while away
+        setConversations(loadConversations())
+      }
+    })
   }, [])
 
   const refreshModels = useCallback(() => {
@@ -225,6 +279,7 @@ export function ChatInterface() {
 
     const ctrl = new AbortController()
     abortRef.current = ctrl
+    ChatStore.startStream(convoId!, ctrl)
 
     try {
       const res = await fetch('/api/ollama/chat', {
@@ -254,14 +309,17 @@ export function ChatInterface() {
             const data = JSON.parse(line)
             if (data.tool_status) {
               setToolStatus(data.tool_status)
+              ChatStore.updateToolStatus(data.tool_status)
               continue
             }
             if (data.pending_questions) {
               setPendingQuestions(data.pending_questions)
+              ChatStore.setPendingQuestions(data.pending_questions)
               continue
             }
             if (data.pending_approval) {
               setPendingApprovals(prev => [...prev, data.pending_approval])
+              ChatStore.addPendingApproval(data.pending_approval)
               continue
             }
             if (data.tool_created) {
@@ -271,16 +329,20 @@ export function ChatInterface() {
             }
             if (data.pending_tool) {
               setPendingTool(data.pending_tool)
+              ChatStore.setPendingTool(data.pending_tool)
               continue
             }
             if (data.pending_workflow) {
               setPendingWorkflow(data.pending_workflow)
+              ChatStore.setPendingWorkflow(data.pending_workflow)
               continue
             }
             if (data.message?.content) {
               setToolStatus(null)
+              ChatStore.updateToolStatus(null)
               accumulated += data.message.content
               const content = accumulated
+              persistStreamingContent(convoId!, content)
               setConversations(prev => {
                 const updated = prev.map(c => {
                   if (c.id !== convoId) return c
@@ -289,7 +351,7 @@ export function ChatInterface() {
                   )
                   return { ...c, messages: msgs, updatedAt: new Date() }
                 })
-                saveConversations(updated)
+                // saveConversations omitted here — persistStreamingContent handles it
                 return updated
               })
             }
@@ -320,6 +382,7 @@ export function ChatInterface() {
       setPendingApprovals([])
       setPendingQuestions(null)
       abortRef.current = null
+      ChatStore.endStream()
     }
   }, [input, isStreaming, selectedModel, activeId, conversations, createConversation])
 
@@ -331,7 +394,8 @@ export function ChatInterface() {
   }
 
   const stopStreaming = () => {
-    abortRef.current?.abort()
+    ChatStore.abortStream()
+    abortRef.current = null
     setIsStreaming(false)
   }
 
@@ -527,13 +591,14 @@ export function ChatInterface() {
               <p className="text-[10px] text-muted-foreground truncate">{pendingTool.description}</p>
             </div>
             <div className="flex gap-2 flex-shrink-0">
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPendingTool(null)}>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setPendingTool(null); ChatStore.setPendingTool(null) }}>
                 Cancel
               </Button>
               <Button size="sm" className="h-7 text-xs" onClick={() => {
                 addUserTool(pendingTool)
                 window.dispatchEvent(new CustomEvent('hearth:tool-created'))
                 setPendingTool(null)
+                ChatStore.setPendingTool(null)
               }}>
                 Save to sidebar
               </Button>
@@ -549,8 +614,9 @@ export function ChatInterface() {
               addWorkflowTool(wf)
               window.dispatchEvent(new CustomEvent('hearth:tool-created'))
               setPendingWorkflow(null)
+              ChatStore.setPendingWorkflow(null)
             }}
-            onCancel={() => setPendingWorkflow(null)}
+            onCancel={() => { setPendingWorkflow(null); ChatStore.setPendingWorkflow(null) }}
           />
         )}
 

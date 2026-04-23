@@ -18,7 +18,8 @@ import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { loadUserTools } from '@/lib/user-tools'
 import { loadWorkflowTools } from '@/lib/workflow-tools'
-import * as RunStore from '@/lib/workflow-run-store'
+import * as RunStore  from '@/lib/workflow-run-store'
+import * as ChatStore from '@/lib/chat-store'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -36,8 +37,9 @@ const bottomItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
-  const [hasTools, setHasTools]       = useState(false)
-  const [hasActiveRun, setHasActiveRun] = useState(false)
+  const [hasTools, setHasTools]           = useState(false)
+  const [hasActiveRun, setHasActiveRun]   = useState(false)
+  const [chatStreaming, setChatStreaming]  = useState(false)
 
   useEffect(() => {
     setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
@@ -50,6 +52,12 @@ export function Sidebar() {
     const sync = () => setHasActiveRun(RunStore.getActiveRuns().length > 0)
     sync()
     return RunStore.subscribe(sync)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => setChatStreaming(ChatStore.isActive())
+    sync()
+    return ChatStore.subscribe(sync)
   }, [])
 
   return (
@@ -66,6 +74,7 @@ export function Sidebar() {
         <nav className="flex flex-1 flex-col items-center gap-1 py-4 overflow-y-auto">
           {navItems.map(({ href, icon: Icon, label }) => {
             const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
+            const showDot  = href === '/chat' && chatStreaming && !isActive
             return (
               <Tooltip key={href}>
                 <TooltipTrigger asChild>
@@ -79,7 +88,12 @@ export function Sidebar() {
                     )}
                     aria-label={label}
                   >
-                    <Icon className="h-5 w-5" />
+                    <div className="relative">
+                      <Icon className="h-5 w-5" />
+                      {showDot && (
+                        <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-primary animate-pulse" />
+                      )}
+                    </div>
                   </Link>
                 </TooltipTrigger>
                 <TooltipContent side="right">{label}</TooltipContent>

@@ -155,6 +155,35 @@ const GOOGLE_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
+      name: 'send_email',
+      description: 'Send an email via Gmail. ALWAYS call ask_clarification first to confirm recipient, subject, and body with the user before sending.',
+      parameters: {
+        type: 'object',
+        properties: {
+          to: {
+            type: 'string',
+            description: 'Recipient email address.',
+          },
+          subject: {
+            type: 'string',
+            description: 'Email subject line.',
+          },
+          body: {
+            type: 'string',
+            description: 'Email body in plain text.',
+          },
+          account: {
+            type: 'string',
+            description: 'Gmail account to send from. Omit to use the first connected account.',
+          },
+        },
+        required: ['to', 'subject', 'body'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'get_calendar_events',
       description: 'List upcoming Google Calendar events starting from now.',
       parameters: {
@@ -191,6 +220,7 @@ export function toolStatusLabel(name: string): string {
   const labels: Record<string, string> = {
     get_inbox: 'Checking Gmail...',
     read_email: 'Reading email...',
+    send_email: 'Sending email...',
     get_calendar_events: 'Checking Calendar...',
     create_workflow: 'Creating workflow...',
     memory: 'Updating memory…',
@@ -386,6 +416,50 @@ async function execGetCalendarEvents(args: Record<string, unknown>): Promise<str
   return results.join('\n\n===\n\n')
 }
 
+async function execSendEmail(args: Record<string, unknown>): Promise<string> {
+  const to      = String(args.to      ?? '').trim()
+  const subject = String(args.subject ?? '').replace(/[\r\n]/g, ' ').trim()
+  const body    = String(args.body    ?? '')
+
+  if (!to)      return 'Error: recipient address is required.'
+  if (!subject) return 'Error: subject is required.'
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return 'Error: invalid recipient address.'
+
+  const emails = resolveAccount(args.account)
+  if (!emails.length) {
+    if (args.account) return `Error: no account matching "${args.account}".`
+    return 'Error: Gmail not authenticated.'
+  }
+
+  const senderEmail = emails[0]
+  const token = await getValidAccessTokenForAccount(senderEmail)
+  if (!token) return `Error: could not authenticate ${senderEmail}.`
+
+  const message = [
+    `From: ${senderEmail}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    body,
+  ].join('\r\n')
+
+  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw: Buffer.from(message).toString('base64url') }),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const detail = err?.error?.message ? `: ${err.error.message}` : ''
+    return `Error: failed to send (${res.status}${detail}).`
+  }
+
+  return `Email sent to ${to}.`
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
@@ -394,6 +468,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
     switch (name) {
       case 'get_inbox':           return await execGetInbox(args)
       case 'read_email':          return await execReadEmail(args)
+      case 'send_email':          return await execSendEmail(args)
       case 'get_calendar_events': return await execGetCalendarEvents(args)
       default:                    return `Error: unknown tool "${name}"`
     }
