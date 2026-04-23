@@ -31,7 +31,10 @@ export function isXpAvailable(): boolean {
 }
 
 export async function startBot(puppetType: PuppetType = 'wechat4u') {
-  if (global.__wechat) return
+  if (global.__wechat) {
+    if (global.__wechat.state.status !== 'error') return
+    await stopBot()
+  }
 
   const state: BotState = { status: 'scanning', puppet: puppetType, qr: null, loggedInAs: null, error: null }
 
