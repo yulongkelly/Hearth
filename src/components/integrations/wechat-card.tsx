@@ -226,19 +226,22 @@ export function WechatCard() {
               <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <p className="text-xs text-destructive font-medium">
-                  {accountBlocked ? 'Account not supported for web login' : 'Connection failed'}
+                  {puppet === 'xp' ? 'WeChat PC not detected' : accountBlocked ? 'Account not supported for web login' : 'Connection failed'}
                 </p>
-                {!accountBlocked && (
-                  <p className="text-[10px] text-muted-foreground">{state?.error}</p>
-                )}
+                <p className="text-[10px] text-muted-foreground">
+                  {puppet === 'xp'
+                    ? 'Open WeChat on your PC and make sure you\'re logged in, then retry.'
+                    : accountBlocked
+                      ? 'Your account was created after 2017 — Tencent blocks web login for it.'
+                      : state?.error}
+                </p>
               </div>
             </div>
 
-            {/* Account blocked — show XP guide */}
-            {accountBlocked && !xpAvailable && (
+            {/* wechat4u blocked + no xp installed — show setup guide */}
+            {puppet !== 'xp' && accountBlocked && !xpAvailable && (
               <div className="space-y-2">
                 <p className="text-[10px] text-muted-foreground">
-                  Your account was created after 2017 and Tencent has blocked web login for it.
                   Use <strong>WeChat PC mode</strong> instead — it works for all accounts.
                 </p>
                 <button
@@ -251,21 +254,22 @@ export function WechatCard() {
               </div>
             )}
 
-            {/* XP available but still errored — likely WeChat PC not open */}
-            {accountBlocked && xpAvailable && (
-              <p className="text-[10px] text-muted-foreground">
-                Make sure <strong>WeChat PC</strong> is open and logged in, then retry.
-              </p>
-            )}
-
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2">
+              {/* Retry with same puppet (xp) or fallback to wechat4u */}
+              <Button size="sm" variant="outline" onClick={() => handleConnect(puppet === 'xp' ? 'xp' : 'wechat4u')} disabled={connecting} className="gap-2">
                 {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 Retry
               </Button>
-              {accountBlocked && xpAvailable && (
+              {/* wechat4u blocked + xp available → offer switch */}
+              {puppet !== 'xp' && accountBlocked && xpAvailable && (
                 <Button size="sm" onClick={() => handleConnect('xp')} disabled={connecting} className="gap-2">
                   <Monitor className="h-3.5 w-3.5" /> Try WeChat PC mode
+                </Button>
+              )}
+              {/* xp failed → offer fallback to QR */}
+              {puppet === 'xp' && (
+                <Button size="sm" variant="ghost" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2 text-xs text-muted-foreground">
+                  <MessageCircle className="h-3.5 w-3.5" /> Use QR instead
                 </Button>
               )}
             </div>
