@@ -17,6 +17,12 @@ interface WechatState {
   xpAvailable:  boolean
 }
 
+function isXpVersionError(error: string | null | undefined): boolean {
+  if (!error) return true  // xp failing with no message = agent injection failed = version mismatch
+  const lower = error.toLowerCase()
+  return lower.includes('not a function') || lower.includes('unable to find method') || lower.includes('typeerror')
+}
+
 // Detect the "web login blocked" error from wechat4u
 function isAccountBlockedError(error: string | null): boolean {
   if (!error) return false
@@ -226,11 +232,15 @@ export function WechatCard() {
               <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <p className="text-xs text-destructive font-medium">
-                  {puppet === 'xp' ? 'WeChat PC not detected' : accountBlocked ? 'Account not supported for web login' : 'Connection failed'}
+                  {puppet === 'xp'
+                    ? isXpVersionError(state?.error) ? 'WeChat version not supported' : 'WeChat PC not detected'
+                    : accountBlocked ? 'Account not supported for web login' : 'Connection failed'}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
                   {puppet === 'xp'
-                    ? 'Open WeChat on your PC and make sure you\'re logged in, then retry.'
+                    ? isXpVersionError(state?.error)
+                      ? 'WeChat PC mode requires version 3.9.10.27. Your WeChat is newer — downgrade or use QR scan instead.'
+                      : 'Open WeChat on your PC and make sure you\'re logged in, then retry.'
                     : accountBlocked
                       ? 'Your account was created after 2017 — Tencent blocks web login for it.'
                       : state?.error}
