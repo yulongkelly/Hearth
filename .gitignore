@@ -30,6 +30,8 @@ yarn-error.log*
 
 # misc
 .DS_Store
+.netlify/
+.claude/settings.local.json
 *.pem
 Thumbs.db
 
