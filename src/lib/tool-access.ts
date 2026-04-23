@@ -7,6 +7,7 @@ export const TOOL_ACCESS: Record<string, ToolAccess> = {
   read_email:          'read',
   get_calendar_events: 'read',
   get_transactions:    'read',
+  query_events:        'read',
   ask_clarification:   'read',
   memory:              'read',
   create_workflow:     'read',

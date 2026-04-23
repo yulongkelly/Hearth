@@ -9,6 +9,9 @@ import { readMemory, readMemoryTrimmed, addEntry, replaceEntry, removeEntry } fr
 import type { MemoryTarget } from '@/lib/memory-store'
 import { compile, compileRetryPrompt } from '@/lib/workflow-compiler'
 import type { WorkflowTool } from '@/lib/workflow-tools'
+import { appendEvent } from '@/lib/event-store'
+
+const EVENT_SKIP = new Set(['memory', 'ask_clarification', 'create_workflow', 'query_events'])
 
 const NDJSON_HEADERS = {
   'Content-Type': 'application/x-ndjson',
@@ -216,7 +219,16 @@ export async function POST(req: NextRequest) {
             }
 
             writeLine({ tool_status: toolStatusLabel(tc.function.name) })
-            return executeTool(tc.function.name, tc.function.arguments)
+            const result = await executeTool(tc.function.name, tc.function.arguments)
+            if (!EVENT_SKIP.has(tc.function.name)) {
+              appendEvent({
+                type:   'tool_call',
+                tool:   tc.function.name,
+                args:   args,
+                result: String(result).slice(0, 500),
+              })
+            }
+            return result
           })
         )
 

@@ -1,5 +1,7 @@
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
 import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
+import { listEvents, searchEvents } from '@/lib/event-store'
+import type { HearthEvent } from '@/lib/event-store'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -205,6 +207,24 @@ const GOOGLE_TOOL_DEFINITIONS = [
   },
 ]
 
+const QUERY_EVENTS_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'query_events',
+    description: 'Search past activity history to recall when tools were last used or what results they returned. Use for "when did I last...", "how often...", or "what was the result of..." questions.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords to search for. Searches tool names, args, and result text.' },
+        type:  { type: 'string', description: '"tool_call" or "workflow_run". Omit for both.' },
+        days:  { type: 'number', description: 'How many days to look back. Default 30.' },
+        limit: { type: 'number', description: 'Max events to return. Default 10, max 50.' },
+      },
+      required: [],
+    },
+  },
+}
+
 const PLAID_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
@@ -229,12 +249,12 @@ const PLAID_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always = [MEMORY_TOOL_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
+  const always = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
   const google = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   const plaid  = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
   return [...always, ...google, ...plaid]
@@ -249,6 +269,7 @@ export function toolStatusLabel(name: string): string {
     send_email:          'Sending email...',
     get_calendar_events: 'Checking Calendar...',
     get_transactions:    'Fetching transactions...',
+    query_events:        'Searching activity history...',
     create_workflow:     'Creating workflow...',
     memory:              'Updating memory…',
   }
@@ -487,6 +508,30 @@ async function execSendEmail(args: Record<string, unknown>): Promise<string> {
   return `Email sent to ${to}.`
 }
 
+function formatEvent(e: HearthEvent): string {
+  const lines = [`Time: ${e.timestamp}`, `Type: ${e.type}`]
+  if (e.tool)         lines.push(`Tool: ${e.tool}`)
+  if (e.args)         lines.push(`Args: ${JSON.stringify(e.args)}`)
+  if (e.result)       lines.push(`Result: ${e.result}`)
+  if (e.workflowName) lines.push(`Workflow: ${e.workflowName}`)
+  if (e.durationMs)   lines.push(`Duration: ${e.durationMs}ms`)
+  return lines.join('\n')
+}
+
+function execQueryEvents(args: Record<string, unknown>): string {
+  const query = args.query ? String(args.query) : null
+  const type  = args.type  ? String(args.type)  : undefined
+  const days  = Math.min(Number(args.days)  || 30, 90)
+  const limit = Math.min(Number(args.limit) || 10, 50)
+
+  const events = query
+    ? searchEvents(query, { type, days, limit })
+    : listEvents({ type, days, limit })
+
+  if (!events.length) return 'No matching events found.'
+  return events.map(formatEvent).join('\n\n---\n\n')
+}
+
 async function execGetTransactions(args: Record<string, unknown>): Promise<string> {
   const creds = loadPlaidCredentials()
   if (!creds) return 'Error: Plaid not configured. Ask the user to set up Plaid on the integrations page.'
@@ -568,6 +613,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'send_email':          return await execSendEmail(args)
       case 'get_calendar_events': return await execGetCalendarEvents(args)
       case 'get_transactions':    return await execGetTransactions(args)
+      case 'query_events':        return execQueryEvents(args)
       default:                    return `Error: unknown tool "${name}"`
     }
   } catch {
