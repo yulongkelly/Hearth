@@ -230,17 +230,17 @@ const PLAID_TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'get_transactions',
-      description: 'Get recent bank transactions from linked accounts via Plaid.',
+      description: 'Get bank transaction history from any linked account. Use days=1 for "today", days=7 for "this week", etc. Supports filtering by institution name (e.g. "TD Bank", "Chase"). Returns date, amount, merchant, and category for each transaction.',
       parameters: {
         type: 'object',
         properties: {
           days: {
             type: 'number',
-            description: 'Number of days to look back. Default 30, max 90.',
+            description: 'How many days back to look. Use 1 for today, 7 for this week, 30 for this month. Default 30, max 90.',
           },
           institution: {
             type: 'string',
-            description: 'Institution name to filter by (e.g. "Chase"). Omit for all linked accounts.',
+            description: 'Bank name to filter by, e.g. "TD Bank". Omit to include all linked accounts.',
           },
         },
         required: [],
@@ -545,8 +545,8 @@ async function execGetTransactions(args: Record<string, unknown>): Promise<strin
     if (!items.length) return `Error: no linked institution matching "${args.institution}".`
   }
 
-  const startDate = new Date(Date.now() - days * 86_400_000).toISOString().split('T')[0]
   const endDate   = new Date().toISOString().split('T')[0]
+  const startDate = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().split('T')[0]
   const base      = plaidBaseUrl(creds.env)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
