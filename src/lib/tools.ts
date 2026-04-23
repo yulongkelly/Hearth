@@ -37,7 +37,7 @@ const CREATE_WORKFLOW_DEFINITION = {
               id:     { type: 'string',  description: 'Unique step id, e.g. "step1"' },
               type:   { type: 'string',  description: '"tool" for API calls, "action" for in-process operations' },
               name:   { type: 'string',  description: 'Exact step name from the whitelist' },
-              params: { type: 'object',  description: 'Step parameters. Values may be literals, $varName references, or {paramName} user inputs.' },
+              params: { type: 'object',  description: 'Step parameters. Values may be literals, $varName references, or {paramName} user inputs. For summarize steps you MUST include an "instruction" field that tells the LLM exactly how to map fields. For emails use: "For each email: headline=subject line, subtext=sender name from the From field, note=snippet, tags=account label plus 1-2 content keywords". For events use: "For each event: headline=title, subtext=date and time, tags=account label". Always include account as a tag so the source is visible.' },
               output: { type: 'string',  description: 'Variable name to store this step\'s output for downstream steps' },
             },
             required: ['id', 'type', 'name', 'params', 'output'],
@@ -288,8 +288,7 @@ async function fetchInboxForAccount(email: string, max: number, multiAccount: bo
   return details.map(msg => {
     const h = (name: string) =>
       msg.payload?.headers?.find((x: { name: string }) => x.name === name)?.value ?? '(unknown)'
-    const accountLine = multiAccount ? `Account: ${label}\n` : ''
-    return `${accountLine}ID: ${msg.id}\nFrom: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\nSnippet: ${msg.snippet ?? ''}`
+    return `Account: ${label}\nID: ${msg.id}\nFrom: ${h('From')}\nSubject: ${h('Subject')}\nDate: ${h('Date')}\nSnippet: ${msg.snippet ?? ''}`
   }).join('\n\n---\n\n')
 }
 
@@ -373,7 +372,7 @@ async function execGetCalendarEvents(args: Record<string, unknown>): Promise<str
       const start = evt.start?.dateTime ?? evt.start?.date ?? '(unknown)'
       const end   = evt.end?.dateTime   ?? evt.end?.date   ?? '(unknown)'
       const lines = [
-        ...(multiAccount ? [`Account: ${label}`] : []),
+        `Account: ${label}`,
         `Title: ${evt.summary ?? '(no title)'}`,
         `Start: ${start}`,
         `End: ${end}`,

@@ -10,19 +10,28 @@ export async function executeWorkflow(
 ): Promise<Record<string, string>> {
   const context: Record<string, string> = {}
 
+  function lastNonEmptyContextValue(): string {
+    const vals = Object.values(context).filter(Boolean)
+    return vals.length > 0 ? vals[vals.length - 1] : ''
+  }
+
   function resolveParams(params: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(params)) {
       if (typeof v === 'string') {
         if (v.startsWith('$')) {
-          out[k] = context[v.slice(1)] ?? ''
+          // Resolve $var — fall back to most recent output if var is missing
+          out[k] = context[v.slice(1)] || lastNonEmptyContextValue()
         } else {
           out[k] = v.replace(/\{(\w+)\}/g, (_, key) => userParams[key] ?? `{${key}}`)
         }
       } else if (Array.isArray(v)) {
-        out[k] = v.map(item =>
-          typeof item === 'string' && item.startsWith('$') ? context[item.slice(1)] ?? item : item
-        )
+        out[k] = v.map(item => {
+          if (typeof item === 'string' && item.startsWith('$')) {
+            return context[item.slice(1)] || lastNonEmptyContextValue()
+          }
+          return item
+        })
       } else {
         out[k] = v
       }

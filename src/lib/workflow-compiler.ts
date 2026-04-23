@@ -36,6 +36,60 @@ function normalizeName(name: string): string {
   return name
 }
 
+// After parsing, fix any $varName references that don't match a real previous output.
+// Small models often use wrong or inconsistent var names — this rewires them automatically.
+function rewireRefs(steps: WorkflowStep[]): void {
+  for (let i = 0; i < steps.length; i++) {
+    const available = steps.slice(0, i).map(s => s.output) // outputs available at this step
+    if (available.length === 0) continue
+
+    const fixRef = (v: unknown): unknown => {
+      if (typeof v !== 'string') return v
+      // Normalise: treat bare var names (no $) that match available outputs as $refs
+      const bare = v.startsWith('$') ? v.slice(1) : v
+      if (available.includes(bare)) return `$${bare}` // already correct or just missing $
+      if (v.startsWith('$') && !available.includes(bare)) {
+        // Broken $ref — point to the most recent available output
+        return `$${available[available.length - 1]}`
+      }
+      return v
+    }
+
+    const params = steps[i].params
+    for (const key of Object.keys(params)) {
+      const val = params[key]
+      if (typeof val === 'string') {
+        params[key] = fixRef(val)
+      } else if (Array.isArray(val)) {
+        params[key] = val.map(item => fixRef(item))
+        // If merge_lists inputs is empty or all non-refs, wire all previous outputs
+        if (steps[i].name === 'merge_lists') {
+          const fixed = (params[key] as unknown[]).filter(
+            v => typeof v === 'string' && v.startsWith('$')
+          )
+          if (fixed.length === 0) params[key] = available.map(o => `$${o}`)
+        }
+      }
+    }
+
+    // merge_lists with no inputs key at all — auto-wire from all previous outputs
+    if (steps[i].name === 'merge_lists' && !('inputs' in params)) {
+      params['inputs'] = available.map(o => `$${o}`)
+    }
+
+    // detect_conflicts / filter_events / summarize with missing primary input key — wire from previous
+    const primaryKey: Record<string, string> = {
+      detect_conflicts: 'events',
+      filter_events:    'events',
+      summarize:        'data',
+    }
+    const pk = primaryKey[steps[i].name]
+    if (pk && (!(pk in params) || params[pk] === '' || params[pk] === undefined)) {
+      params[pk] = `$${available[available.length - 1]}`
+    }
+  }
+}
+
 export function compile(raw: unknown): CompileResult {
   const parsed = parseRaw(raw)
   if (!parsed) return { ok: false, error: 'Could not parse workflow JSON' }
@@ -71,6 +125,9 @@ export function compile(raw: unknown): CompileResult {
       output: outputVar,
     })
   }
+
+  // Fix broken variable references produced by imprecise small models
+  rewireRefs(steps)
 
   const workflow: Omit<WorkflowTool, 'id' | 'createdAt' | 'runs'> = {
     name:        String(parsed.name        ?? 'Untitled Tool'),

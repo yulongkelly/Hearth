@@ -42,6 +42,7 @@ export function GmailCard({ initialError }: GmailCardProps) {
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [nicknameEdit, setNicknameEdit] = useState<NicknameEditState | null>(null)
+  const [showAddAccount, setShowAddAccount] = useState(false)
 
   useEffect(() => {
     fetch('/api/gmail/status')
@@ -203,15 +204,44 @@ export function GmailCard({ initialError }: GmailCardProps) {
             ))}
 
             {/* Add another account */}
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 text-xs"
-              onClick={() => { window.location.href = '/api/auth/gmail' }}
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              Add another account
-            </Button>
+            {showAddAccount ? (
+              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+                <p className="text-xs font-medium">Before adding another account:</p>
+                <ol className="space-y-1.5 text-xs text-muted-foreground list-none">
+                  <li className="flex gap-2 items-start">
+                    <span className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold mt-px">1</span>
+                    <span>Go to <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noreferrer" className="text-primary underline inline-flex items-center gap-0.5">Google Cloud Console → Audience → Test users <ExternalLink className="h-3 w-3" /></a></span>
+                  </li>
+                  <li className="flex gap-2 items-start">
+                    <span className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold mt-px">2</span>
+                    <span>Click <strong className="text-foreground">Add users</strong>, enter the new email address, and click <strong className="text-foreground">Save</strong>.</span>
+                  </li>
+                  <li className="flex gap-2 items-start">
+                    <span className="flex-shrink-0 flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-primary text-[10px] font-bold mt-px">3</span>
+                    <span>Come back here and click <strong className="text-foreground">Continue to Connect</strong>.</span>
+                  </li>
+                </ol>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setShowAddAccount(false)} className="text-xs">
+                    Cancel
+                  </Button>
+                  <Button size="sm" className="text-xs gap-1.5" onClick={() => { window.location.href = '/api/auth/gmail' }}>
+                    <UserPlus className="h-3.5 w-3.5" />
+                    Continue to Connect
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs"
+                onClick={() => setShowAddAccount(true)}
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Add another account
+              </Button>
+            )}
           </div>
         )}
 
