@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
   MessageSquare,
+  Calendar,
   Cpu,
   Plug2,
   Settings,
@@ -17,11 +18,13 @@ import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { loadUserTools } from '@/lib/user-tools'
 import { loadWorkflowTools } from '@/lib/workflow-tools'
+import * as RunStore from '@/lib/workflow-run-store'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/chat', icon: MessageSquare, label: 'Chat' },
-  { href: '/models', icon: Cpu, label: 'Models' },
+  { href: '/chat',     icon: MessageSquare, label: 'Chat'     },
+  { href: '/calendar', icon: Calendar,     label: 'Calendar' },
+  { href: '/models',   icon: Cpu,          label: 'Models'   },
   { href: '/integrations', icon: Plug2, label: 'Connected Apps' },
   { href: '/memory', icon: Brain, label: 'Memory' },
 ]
@@ -33,13 +36,20 @@ const bottomItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
-  const [hasTools, setHasTools] = useState(false)
+  const [hasTools, setHasTools]       = useState(false)
+  const [hasActiveRun, setHasActiveRun] = useState(false)
 
   useEffect(() => {
     setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
     const handler = () => setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
     window.addEventListener('hearth:tool-created', handler)
     return () => window.removeEventListener('hearth:tool-created', handler)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => setHasActiveRun(RunStore.getActiveRuns().length > 0)
+    sync()
+    return RunStore.subscribe(sync)
   }, [])
 
   return (
@@ -91,7 +101,12 @@ export function Sidebar() {
                   )}
                   aria-label="Tools"
                 >
-                  <Wrench className="h-5 w-5" />
+                  <div className="relative">
+                    <Wrench className="h-5 w-5" />
+                    {hasActiveRun && (
+                      <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-primary animate-pulse" />
+                    )}
+                  </div>
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right">Tools</TooltipContent>

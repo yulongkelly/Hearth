@@ -8,15 +8,18 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/ui/markdown'
 import { cn } from '@/lib/utils'
 import {
   loadWorkflowTools, deleteWorkflowTool, addWorkflowRun,
-  UI_MAP, type WorkflowTool, type WorkflowRun,
+  UI_MAP, type WorkflowTool, type WorkflowRun, type WorkflowStep,
 } from '@/lib/workflow-tools'
 import { executeWorkflow, type StepStatus } from '@/lib/workflow-executor'
+import { validatePage, type UIPage } from '@/lib/ui-schema'
+import * as RunStore from '@/lib/workflow-run-store'
 
 const MODEL_KEY = 'hearth_default_model'
 
@@ -29,11 +32,90 @@ function ToolIcon({ name, className }: { name: string; className?: string }) {
   return <Icon className={className} />
 }
 
-interface StepState {
-  id:      string
-  status:  StepStatus
-  output?: string
-  open:    boolean
+type StepState = RunStore.RunStepState
+
+function PageHeader({ title, badge }: { title?: string; badge?: UIPage extends { badge?: infer B } ? B : never }) {
+  if (!title && !badge) return null
+  return (
+    <div className="flex items-center justify-between gap-3 mb-3">
+      {title && <p className="text-sm font-semibold">{title}</p>}
+      {badge && (
+        <Badge variant={(badge as { variant: 'default' | 'success' | 'destructive' | 'warning' }).variant}
+          className="text-xs font-semibold uppercase tracking-wide">
+          {(badge as { text: string }).text}
+        </Badge>
+      )}
+    </div>
+  )
+}
+
+function TagList({ tags }: { tags?: string[] }) {
+  if (!tags?.length) return null
+  return (
+    <div className="flex gap-1 flex-shrink-0">
+      {tags.map(tag => (
+        <span key={tag} className="font-mono text-[10px] border border-border rounded px-1.5 py-0.5 text-muted-foreground">
+          {tag}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function PageRenderer({ page }: { page: UIPage }) {
+  if (page.type === 'card_page') return (
+    <div className="space-y-2">
+      <PageHeader title={page.title} badge={page.badge as never} />
+      {page.cards.map((card, i) => (
+        <div key={i} className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-medium leading-snug">{card.headline}</p>
+            <TagList tags={card.tags} />
+          </div>
+          {card.subtext && <p className="text-xs text-muted-foreground">{card.subtext}</p>}
+          {card.note    && <p className="text-xs text-muted-foreground/60 italic">{card.note}</p>}
+        </div>
+      ))}
+    </div>
+  )
+
+  if (page.type === 'list_page') return (
+    <div className="space-y-1">
+      <PageHeader title={page.title} badge={page.badge as never} />
+      {page.items.map((item, i) => (
+        <div key={i} className="flex items-center gap-2 px-2 py-1.5">
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/40 flex-shrink-0" />
+          <span className="flex-1 text-sm">{item.text}</span>
+          {item.detail && <span className="text-xs text-muted-foreground">{item.detail}</span>}
+          <TagList tags={item.tags} />
+        </div>
+      ))}
+    </div>
+  )
+
+  // text_page
+  return (
+    <div className="space-y-2">
+      {page.title && <p className="text-sm font-semibold mb-1">{page.title}</p>}
+      <Markdown content={page.body} />
+    </div>
+  )
+}
+
+function stepCategory(step: WorkflowStep): string | null {
+  if (step.name === 'get_calendar_events') {
+    const a = step.params.account
+    return typeof a === 'string' && a ? a : 'calendar'
+  }
+  if (step.name === 'get_inbox' || step.name === 'read_email') return 'email'
+  if (['merge_lists', 'detect_conflicts', 'filter_events', 'summarize'].includes(step.name)) return 'action'
+  return null
+}
+
+function categoryVariant(cat: string): 'default' | 'secondary' | 'outline' {
+  if (cat === 'action') return 'default'
+  if (cat === 'work') return 'outline'
+  return 'secondary'
 }
 
 function statusIcon(status: StepStatus) {
@@ -82,12 +164,13 @@ function RunHistoryItem({ run, steps }: { run: WorkflowRun; steps: WorkflowTool[
 
 export function WorkflowRunPage({ id }: { id: string }) {
   const router = useRouter()
-  const [tool, setTool]       = useState<WorkflowTool | null>(null)
-  const [params, setParams]   = useState<Record<string, string>>({})
+  const [tool, setTool]         = useState<WorkflowTool | null>(null)
+  const [params, setParams]     = useState<Record<string, string>>({})
   const [stepStates, setStepStates] = useState<StepState[]>([])
-  const [running, setRunning] = useState(false)
+  const [running, setRunning]   = useState(false)
   const [deleting, setDeleting] = useState(false)
 
+  // Load tool from localStorage on mount
   useEffect(() => {
     const found = loadWorkflowTools().find(t => t.id === id) ?? null
     setTool(found)
@@ -95,33 +178,45 @@ export function WorkflowRunPage({ id }: { id: string }) {
       const defaults: Record<string, string> = {}
       found.parameters.forEach(p => { defaults[p.name] = p.defaultValue ?? '' })
       setParams(defaults)
-      setStepStates(found.steps.map(s => ({ id: s.id, status: 'pending', open: false })))
     }
   }, [id])
 
-  function updateStep(stepId: string, status: StepStatus, output?: string) {
-    setStepStates(prev => prev.map(s =>
-      s.id === stepId ? { ...s, status, output, open: status === 'done' || status === 'error' } : s
-    ))
-  }
+  // Sync step states from global run store (survives navigation)
+  useEffect(() => {
+    function sync() {
+      const run = RunStore.getRun(id)
+      if (run) {
+        setStepStates(run.stepStates)
+        setRunning(!run.finished)
+        if (run.finished) setTool(loadWorkflowTools().find(t => t.id === id) ?? null)
+      } else {
+        const tool = loadWorkflowTools().find(t => t.id === id)
+        setStepStates(tool?.steps.map(s => ({ id: s.id, status: 'pending' as StepStatus })) ?? [])
+        setRunning(false)
+      }
+    }
+    sync()
+    return RunStore.subscribe(sync)
+  }, [id])
 
-  async function handleRun() {
+  function handleRun() {
     if (!tool || running) return
     const model = localStorage.getItem(MODEL_KEY) ?? 'llama3.2:3b'
-    setRunning(true)
-    setStepStates(tool.steps.map(s => ({ id: s.id, status: 'pending', open: false })))
+    const capturedParams = { ...params }
 
-    const finalContext = await executeWorkflow(tool, params, model, updateStep)
+    RunStore.startRun(tool.id, tool.name, tool.steps.map(s => s.id))
 
-    const run: WorkflowRun = {
-      id: crypto.randomUUID(),
-      parameters: { ...params },
-      stepOutputs: finalContext,
-      createdAt: new Date().toISOString(),
-    }
-    addWorkflowRun(tool.id, run)
-    setTool(loadWorkflowTools().find(t => t.id === id) ?? tool)
-    setRunning(false)
+    executeWorkflow(tool, capturedParams, model, (stepId, status, output) => {
+      RunStore.updateRunStep(tool.id, stepId, status, output)
+    }).then(finalContext => {
+      addWorkflowRun(tool.id, {
+        id: crypto.randomUUID(),
+        parameters: capturedParams,
+        stepOutputs: finalContext,
+        createdAt: new Date().toISOString(),
+      } satisfies WorkflowRun)
+      RunStore.finishRun(tool.id)
+    })
   }
 
   function handleDelete() {
@@ -148,6 +243,11 @@ export function WorkflowRunPage({ id }: { id: string }) {
           <div>
             <h1 className="text-sm font-semibold">{tool.name}</h1>
             <p className="text-xs text-muted-foreground">{tool.description}</p>
+            {Object.values(params).filter(Boolean).length > 0 && (
+              <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                {Object.values(params).filter(Boolean).join(' · ')}
+              </p>
+            )}
           </div>
         </div>
         <Button size="sm" variant="ghost" onClick={handleDelete} disabled={deleting} className="text-destructive hover:text-destructive">
@@ -176,40 +276,54 @@ export function WorkflowRunPage({ id }: { id: string }) {
           )}
 
           {/* Steps + Run */}
-          <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="rounded-lg border border-border bg-card p-4 space-y-1">
             {tool.steps.map((step, i) => {
               const state = stepStates[i]
               const title = UI_MAP[step.name] ?? step.name
+              const cat   = stepCategory(step)
               return (
-                <div key={step.id} className="rounded-md border border-border">
-                  <button
-                    onClick={() => setStepStates(prev => prev.map((s, idx) => idx === i ? { ...s, open: !s.open } : s))}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left"
-                  >
-                    {state ? statusIcon(state.status) : <span className="h-3.5 w-3.5 rounded-full border border-muted-foreground/40 inline-block" />}
-                    <span className="text-[10px] text-muted-foreground tabular-nums">{i + 1}</span>
-                    <span className="flex-1 text-xs">{title}</span>
-                    {state?.status === 'done' && (
-                      state.open
-                        ? <ChevronDown  className="h-3 w-3 text-muted-foreground" />
-                        : <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                    )}
-                  </button>
-                  {state?.open && state.output && (
-                    <div className="border-t border-border px-3 py-2">
-                      <Markdown content={state.output} />
-                    </div>
+                <div key={step.id} className="flex items-center gap-3 px-2 py-2 rounded-md">
+                  <div className={cn(
+                    'h-5 w-5 rounded-full flex items-center justify-center flex-shrink-0',
+                    state?.status === 'done'    && 'bg-green-500/15',
+                    state?.status === 'running' && 'bg-primary/15',
+                    state?.status === 'error'   && 'bg-destructive/15',
+                    (!state || state.status === 'pending') && 'bg-muted/50',
+                  )}>
+                    {state ? statusIcon(state.status) : null}
+                  </div>
+                  <span className="text-[10px] tabular-nums text-muted-foreground w-4 flex-shrink-0">{i + 1}</span>
+                  <span className="flex-1 text-xs font-medium">{title}</span>
+                  {cat && (
+                    <Badge variant={categoryVariant(cat)} className="text-[10px] px-1.5 py-0 h-5 font-normal">
+                      {cat}
+                    </Badge>
                   )}
+                  {state?.status === 'done' && <Check className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />}
                 </div>
               )
             })}
 
-            <Button size="sm" onClick={handleRun} disabled={!canRun} className={cn('mt-2 w-full', tool.parameters.length === 0 && 'mt-0')}>
+            <Button size="sm" onClick={handleRun} disabled={!canRun} className="mt-3 w-full">
               {running
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Running...</>
                 : <><Play    className="h-3.5 w-3.5 mr-1.5" />Run</>}
             </Button>
           </div>
+
+          {/* Final output — only shown once all steps are complete */}
+          {(() => {
+            const allDone = stepStates.length > 0 && stepStates.every(s => s.status === 'done' || s.status === 'error')
+            const lastOutput = stepStates[stepStates.length - 1]?.output
+            if (!allDone || !lastOutput) return null
+            const page = validatePage(lastOutput)
+            return (
+              <div className="rounded-lg border border-border bg-card px-5 py-4">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-3">Result</p>
+                <PageRenderer page={page} />
+              </div>
+            )
+          })()}
 
           {/* Run history */}
           {tool.runs.length > 0 && (
