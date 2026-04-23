@@ -1,23 +1,59 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
+import { MessageCircle, Loader2, CheckCircle2, AlertCircle, RefreshCw, Monitor } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
 type BotStatus = 'stopped' | 'scanning' | 'connected' | 'error'
+type PuppetType = 'xp' | 'wechat4u'
 
 interface WechatState {
-  status:     BotStatus
-  qrImage:    string | null
-  loggedInAs: string | null
-  error:      string | null
+  status:       BotStatus
+  puppet:       PuppetType | null
+  qrImage:      string | null
+  loggedInAs:   string | null
+  error:        string | null
+  xpAvailable:  boolean
+}
+
+// Detect the "web login blocked" error from wechat4u
+function isAccountBlockedError(error: string | null): boolean {
+  if (!error) return false
+  const lower = error.toLowerCase()
+  return lower.includes('blocked') || lower.includes('not allowed') ||
+         lower.includes('restricted') || lower.includes('cancel') ||
+         lower.includes('logout') || lower.includes('web')
+}
+
+function XpInstallInstructions() {
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+      <p className="text-xs font-medium">Enable WeChat PC mode (one-time setup)</p>
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        WeChat PC mode bypasses the web login restriction by hooking directly into your running WeChat desktop app — no QR code needed.
+      </p>
+      <ol className="text-[10px] text-muted-foreground space-y-1.5 list-decimal list-inside leading-relaxed">
+        <li>
+          Download{' '}
+          <span className="font-mono bg-muted px-1 rounded text-[10px]">Visual Studio Build Tools</span>{' '}
+          — free from{' '}
+          <span className="text-primary font-medium">visualstudio.microsoft.com/visual-cpp-build-tools</span>
+        </li>
+        <li>Run the installer → select <strong>Desktop development with C++</strong> → Install (~4 GB)</li>
+        <li>Restart your terminal, then run:</li>
+      </ol>
+      <pre className="text-[10px] bg-muted rounded px-2 py-1.5 font-mono select-all">npm install wechaty-puppet-xp</pre>
+      <p className="text-[10px] text-muted-foreground">Then restart Hearth and click Connect — WeChat PC must be open.</p>
+    </div>
+  )
 }
 
 export function WechatCard() {
-  const [state, setState]         = useState<WechatState | null>(null)
-  const [connecting, setConnecting] = useState(false)
+  const [state, setState]               = useState<WechatState | null>(null)
+  const [connecting, setConnecting]     = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [showXpGuide, setShowXpGuide]   = useState(false)
 
   const refresh = useCallback(async () => {
     const res = await fetch('/api/wechat/status')
@@ -26,7 +62,7 @@ export function WechatCard() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  // Poll while scanning for QR code
+  // Poll while scanning (wechat4u QR waiting)
   useEffect(() => {
     if (state?.status !== 'scanning') return
     const id = setInterval(refresh, 3000)
@@ -38,7 +74,6 @@ export function WechatCard() {
     await fetch('/api/wechat/connect', { method: 'POST' })
     setConnecting(false)
     refresh()
-    // Keep polling — login will fire async
     const id = setInterval(async () => {
       const res = await fetch('/api/wechat/status')
       if (res.ok) {
@@ -47,7 +82,7 @@ export function WechatCard() {
         if (data.status !== 'scanning') clearInterval(id)
       }
     }, 2000)
-    setTimeout(() => clearInterval(id), 120_000) // stop after 2 min
+    setTimeout(() => clearInterval(id), 120_000)
   }
 
   async function handleDisconnect() {
@@ -57,7 +92,10 @@ export function WechatCard() {
     refresh()
   }
 
-  const status = state?.status ?? 'stopped'
+  const status       = state?.status ?? 'stopped'
+  const xpAvailable  = state?.xpAvailable ?? false
+  const puppet       = state?.puppet
+  const accountBlocked = status === 'error' && isAccountBlockedError(state?.error ?? null)
 
   return (
     <Card>
@@ -75,7 +113,7 @@ export function WechatCard() {
           {status === 'connected' && (
             <div className="flex items-center gap-1.5 text-[10px] text-green-500">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Connected
+              {puppet === 'xp' ? 'PC mode' : 'Connected'}
             </div>
           )}
         </div>
@@ -86,38 +124,53 @@ export function WechatCard() {
         {/* Stopped */}
         {status === 'stopped' && (
           <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Scan a QR code to connect your WeChat account. Hearth will receive and store your messages locally.
-            </p>
-            <p className="text-[10px] text-muted-foreground/70">
-              Note: WeChat Web login is not supported on some newer accounts created after 2017.
-            </p>
+            {xpAvailable ? (
+              <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+                <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground">
+                  Make sure <strong>WeChat PC</strong> is open and logged in, then click Connect.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Scan a QR code to connect your WeChat account. Messages are stored locally.
+              </p>
+            )}
             <Button size="sm" onClick={handleConnect} disabled={connecting} className="gap-2">
               {connecting
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <MessageCircle className="h-3.5 w-3.5" />}
-              {connecting ? 'Starting…' : 'Connect WeChat'}
+              {connecting ? 'Connecting…' : 'Connect WeChat'}
             </Button>
           </div>
         )}
 
-        {/* Scanning — show QR code */}
+        {/* Scanning — wechat4u QR flow */}
         {status === 'scanning' && (
           <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Open WeChat on your phone → tap <strong>Me → Scan QR Code</strong> to log in.
-            </p>
-            {state?.qrImage ? (
-              <div className="flex flex-col items-center gap-2">
-                <img src={state.qrImage} alt="WeChat QR Code" className="w-48 h-48 rounded-lg border border-border" />
-                <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" /> Waiting for scan…
-                </p>
+            {puppet === 'xp' ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Connecting to WeChat PC…
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating QR code…
-              </div>
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Open WeChat on your phone → <strong>Me → Scan QR Code</strong>
+                </p>
+                {state?.qrImage ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <img src={state.qrImage} alt="WeChat QR Code" className="w-48 h-48 rounded-lg border border-border" />
+                    <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Waiting for scan…
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating QR code…
+                  </div>
+                )}
+              </>
             )}
             <Button size="sm" variant="ghost" onClick={refresh} className="gap-1.5 h-7 text-xs">
               <RefreshCw className="h-3 w-3" /> Refresh
@@ -134,17 +187,17 @@ export function WechatCard() {
                 <span className="text-sm font-medium">{state?.loggedInAs ?? 'WeChat'}</span>
               </div>
               <p className="text-[10px] text-muted-foreground pl-5 mt-0.5">
-                Messages received while Hearth is running are stored locally.
+                {puppet === 'xp'
+                  ? 'Connected via WeChat PC — keep WeChat open while using Hearth.'
+                  : 'Messages received while Hearth is running are stored locally.'}
               </p>
             </div>
             <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDisconnect}
-              disabled={disconnecting}
+              size="sm" variant="ghost"
+              onClick={handleDisconnect} disabled={disconnecting}
               className="text-muted-foreground hover:text-destructive h-7 text-xs gap-1.5"
             >
-              {disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {disconnecting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {disconnecting ? 'Disconnecting…' : 'Disconnect'}
             </Button>
           </div>
@@ -156,13 +209,39 @@ export function WechatCard() {
             <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5">
               <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <p className="text-xs text-destructive font-medium">Connection failed</p>
-                <p className="text-[10px] text-muted-foreground">{state?.error ?? 'Unknown error'}</p>
-                <p className="text-[10px] text-muted-foreground/70">
-                  Your account may not support WeChat Web login. Accounts created after 2017 are often restricted.
+                <p className="text-xs text-destructive font-medium">
+                  {accountBlocked ? 'Account not supported for web login' : 'Connection failed'}
                 </p>
+                {!accountBlocked && (
+                  <p className="text-[10px] text-muted-foreground">{state?.error}</p>
+                )}
               </div>
             </div>
+
+            {/* Account blocked — show XP guide */}
+            {accountBlocked && !xpAvailable && (
+              <div className="space-y-2">
+                <p className="text-[10px] text-muted-foreground">
+                  Your account was created after 2017 and Tencent has blocked web login for it.
+                  Use <strong>WeChat PC mode</strong> instead — it works for all accounts.
+                </p>
+                <button
+                  onClick={() => setShowXpGuide(v => !v)}
+                  className="text-[10px] text-primary hover:underline"
+                >
+                  {showXpGuide ? 'Hide instructions' : 'Show setup instructions'}
+                </button>
+                {showXpGuide && <XpInstallInstructions />}
+              </div>
+            )}
+
+            {/* XP available but still errored — likely WeChat PC not open */}
+            {accountBlocked && xpAvailable && (
+              <p className="text-[10px] text-muted-foreground">
+                Make sure <strong>WeChat PC</strong> is open and logged in, then retry.
+              </p>
+            )}
+
             <Button size="sm" variant="outline" onClick={handleConnect} disabled={connecting} className="gap-2">
               {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Retry
