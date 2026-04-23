@@ -24,21 +24,20 @@ export function isXpAvailable(): boolean {
   try { require.resolve('wechaty-puppet-xp'); return true } catch { return false }
 }
 
-export async function startBot() {
+export async function startBot(puppetType: PuppetType = 'wechat4u') {
   if (global.__wechat) return
 
-  const useXp = isXpAvailable()
-  const state: BotState = { status: 'scanning', puppet: useXp ? 'xp' : 'wechat4u', qr: null, loggedInAs: null, error: null }
+  const state: BotState = { status: 'scanning', puppet: puppetType, qr: null, loggedInAs: null, error: null }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let puppet: any
-  if (useXp) {
+  if (puppetType === 'xp') {
     // XP puppet: hooks into running WeChat PC process — works for ALL accounts, no QR needed
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PuppetXp } = require('wechaty-puppet-xp')
     puppet = new PuppetXp()
   } else {
-    // wechat4u: WeChat Web protocol — blocked for accounts created after ~2017
+    // wechat4u: WeChat Web protocol — simpler setup, blocked for accounts created after ~2017
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { PuppetWechat4u } = require('wechaty-puppet-wechat4u') as typeof import('wechaty-puppet-wechat4u')
     puppet = new PuppetWechat4u()

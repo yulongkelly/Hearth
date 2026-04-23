@@ -69,9 +69,13 @@ export function WechatCard() {
     return () => clearInterval(id)
   }, [state?.status, refresh])
 
-  async function handleConnect() {
+  async function handleConnect(puppet: 'wechat4u' | 'xp' = 'wechat4u') {
     setConnecting(true)
-    await fetch('/api/wechat/connect', { method: 'POST' })
+    await fetch('/api/wechat/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ puppet }),
+    })
     setConnecting(false)
     refresh()
     const id = setInterval(async () => {
@@ -124,19 +128,10 @@ export function WechatCard() {
         {/* Stopped */}
         {status === 'stopped' && (
           <div className="space-y-3">
-            {xpAvailable ? (
-              <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
-                <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  Make sure <strong>WeChat PC</strong> is open and logged in, then click Connect.
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Scan a QR code to connect your WeChat account. Messages are stored locally.
-              </p>
-            )}
-            <Button size="sm" onClick={handleConnect} disabled={connecting} className="gap-2">
+            <p className="text-xs text-muted-foreground">
+              Scan a QR code to connect your WeChat account. Messages are stored locally.
+            </p>
+            <Button size="sm" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2">
               {connecting
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <MessageCircle className="h-3.5 w-3.5" />}
@@ -242,10 +237,17 @@ export function WechatCard() {
               </p>
             )}
 
-            <Button size="sm" variant="outline" onClick={handleConnect} disabled={connecting} className="gap-2">
-              {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Retry
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2">
+                {connecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Retry
+              </Button>
+              {accountBlocked && xpAvailable && (
+                <Button size="sm" onClick={() => handleConnect('xp')} disabled={connecting} className="gap-2">
+                  <Monitor className="h-3.5 w-3.5" /> Try WeChat PC mode
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
