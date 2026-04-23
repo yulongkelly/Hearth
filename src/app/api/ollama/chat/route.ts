@@ -1,9 +1,11 @@
 import { NextRequest } from 'next/server'
 import { OLLAMA_BASE_URL } from '@/lib/ollama'
 import type { OllamaChatMessageWithTools } from '@/lib/ollama'
-import { getAvailableTools, executeTool, toolStatusLabel } from '@/lib/tools'
+import { getAvailableTools, toolStatusLabel } from '@/lib/tools'
 import { getToolAccess, buildPreview } from '@/lib/tool-access'
 import { waitForApproval } from '@/lib/approval-store'
+import { buildTask } from '@/lib/butler/task-builder'
+import { executeTask } from '@/lib/butler/executor'
 import { waitForAnswers } from '@/lib/questions-store'
 import { readMemory, readMemoryTrimmed, addEntry, replaceEntry, removeEntry } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
@@ -201,34 +203,26 @@ export async function POST(req: NextRequest) {
               return `Workflow plan shown to user for review. They can edit the steps and save it to the sidebar.`
             }
 
-            const access = getToolAccess(tc.function.name)
-
-            // ── Safety gate: pause for user approval on write/destructive tools ──
-            if (access !== 'read') {
-              const approvalId = crypto.randomUUID()
-              writeLine({
-                pending_approval: {
-                  id: approvalId,
-                  tool: tc.function.name,
-                  preview: buildPreview(tc.function.name, args),
-                  risk: access,
-                },
-              })
-              const approved = await waitForApproval(approvalId)
-              if (!approved) return 'Action rejected by user.'
-            }
-
-            writeLine({ tool_status: toolStatusLabel(tc.function.name) })
-            const result = await executeTool(tc.function.name, tc.function.arguments)
-            if (!EVENT_SKIP.has(tc.function.name)) {
-              appendEvent({
-                type:   'tool_call',
-                tool:   tc.function.name,
-                args:   args,
-                result: String(result).slice(0, 500),
-              })
-            }
-            return result
+            const task = buildTask(tc.function.name, args)
+            return executeTask(task, {
+              requireApproval: async (t) => {
+                const id = crypto.randomUUID()
+                writeLine({
+                  pending_approval: {
+                    id,
+                    tool:    t.toolName,
+                    preview: buildPreview(t.toolName, t.args),
+                    risk:    getToolAccess(t.toolName),
+                  },
+                })
+                return waitForApproval(id)
+              },
+              emitStatus: (msg) => writeLine({ tool_status: msg }),
+              logEvent:   (t, res) => {
+                if (!EVENT_SKIP.has(t.toolName))
+                  appendEvent({ type: 'tool_call', tool: t.toolName, args: t.args, result: res.slice(0, 500) })
+              },
+            })
           })
         )
 

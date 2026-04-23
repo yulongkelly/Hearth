@@ -77,6 +77,53 @@ graph TB
     OllamaRoute <-->|"approve / answers gating"| ApproveRoutes
 ```
 
+## Three-Layer Architecture (Butler / Monkey / Connector)
+
+The system is evolving toward a strict 3-layer separation:
+
+```
+🗣️  MONKEY LAYER  — Channel Agents
+    WeChat · QQ · Telegram · Discord
+    Input adapter + Output adapter only — no decision-making, no tool calls
+
+        ↓ forward message / ↑ reply result
+
+🧠  BUTLER LAYER  — Unified Brain
+    TaskBuilder → Planner → ExecutionPolicy → Executor
+    Single decision point: intent classification, privacy tagging, policy enforcement
+
+        ↓ call connector / ↑ data
+
+🔧  CONNECTOR LAYER  — Tools & Data Sources
+    Gmail · Calendar · Plaid · Memory · Message Stores
+    No personality, no dialogue — called only by Executor
+```
+
+### Butler Pipeline (Step 1 — implemented)
+
+Every tool call in `/api/ollama/chat` now flows through:
+
+```
+Ollama tool_call
+  → buildTask(toolName, args)          task-builder.ts  — intent + privacyLevel + canUseCloud
+  → executeTask(task, ctx)             executor.ts      — enforces policy, handles approval
+      → enforcePolicy(task)            policy.ts        — allow | confirm | block
+      → ctx.requireApproval(task)      (SSE callback)   — emits pending_approval, waits
+      → executeTool(task.toolName, …)  tools.ts         — unchanged dispatch
+      → ctx.logEvent(task, result)
+```
+
+**Privacy levels** (tagged on every Task — used for future cloud routing):
+- `high`: Gmail content, Plaid transactions, all messaging reads/sends — never leave device
+- `medium`: Calendar events
+- `low`: `query_events`, `memory`, `ask_clarification` — safe to send to cloud model
+
+**Step 2 (planned):** `src/lib/butler/monkey-registry.ts` — unify bot singletons into Monkey objects with session routing (same user across platforms → same Butler session)
+
+**Step 3 (planned):** `src/lib/butler/cloud.ts` — cloud model routing gated by `task.canUseCloud`; cloud receives only abstract intent descriptions, never real data
+
+---
+
 ## Key Design Principles
 
 | Principle | How |
