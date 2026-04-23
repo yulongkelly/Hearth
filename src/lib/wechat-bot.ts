@@ -1,5 +1,11 @@
 import { WechatyBuilder } from 'wechaty'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import { appendWechatMessage } from './wechat-store'
+
+const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
+const PUPPET_FILE = path.join(HEARTH_DIR, 'wechat-puppet')
 
 export type BotStatus = 'stopped' | 'scanning' | 'connected' | 'error'
 export type PuppetType = 'xp' | 'wechat4u'
@@ -48,7 +54,10 @@ export async function startBot(puppetType: PuppetType = 'wechat4u') {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   bot.on('scan',   (qr: any)   => { state.status = 'scanning'; state.qr = qr })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  bot.on('login',  (user: any) => { state.status = 'connected'; state.loggedInAs = user.name(); state.qr = null })
+  bot.on('login',  (user: any) => {
+    state.status = 'connected'; state.loggedInAs = user.name(); state.qr = null
+    try { if (!fs.existsSync(HEARTH_DIR)) fs.mkdirSync(HEARTH_DIR, { recursive: true }); fs.writeFileSync(PUPPET_FILE, puppetType) } catch {}
+  })
   bot.on('logout', ()          => { state.status = 'stopped'; state.loggedInAs = null })
   bot.on('error',  (e: Error)  => { state.status = 'error'; state.error = e.message })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

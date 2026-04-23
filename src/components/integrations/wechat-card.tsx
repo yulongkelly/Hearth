@@ -129,14 +129,23 @@ export function WechatCard() {
         {status === 'stopped' && (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Scan a QR code to connect your WeChat account. Messages are stored locally.
+              {xpAvailable
+                ? 'Connect via QR code or WeChat PC (if your account can\'t use web login).'
+                : 'Scan a QR code to connect your WeChat account. Messages are stored locally.'}
             </p>
-            <Button size="sm" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2">
-              {connecting
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <MessageCircle className="h-3.5 w-3.5" />}
-              {connecting ? 'Connecting…' : 'Connect WeChat'}
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => handleConnect('wechat4u')} disabled={connecting} className="gap-2">
+                {connecting
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <MessageCircle className="h-3.5 w-3.5" />}
+                {connecting ? 'Connecting…' : 'QR Code'}
+              </Button>
+              {xpAvailable && (
+                <Button size="sm" variant="outline" onClick={() => handleConnect('xp')} disabled={connecting} className="gap-2">
+                  <Monitor className="h-3.5 w-3.5" /> WeChat PC
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
@@ -167,9 +176,21 @@ export function WechatCard() {
                 )}
               </>
             )}
-            <Button size="sm" variant="ghost" onClick={refresh} className="gap-1.5 h-7 text-xs">
-              <RefreshCw className="h-3 w-3" /> Refresh
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="ghost" onClick={refresh} className="gap-1.5 h-7 text-xs">
+                <RefreshCw className="h-3 w-3" /> Refresh
+              </Button>
+              {puppet !== 'xp' && xpAvailable && (
+                <Button
+                  size="sm" variant="ghost"
+                  onClick={async () => { await handleDisconnect(); handleConnect('xp') }}
+                  disabled={connecting || disconnecting}
+                  className="gap-1.5 h-7 text-xs text-muted-foreground"
+                >
+                  <Monitor className="h-3 w-3" /> Switch to WeChat PC
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
