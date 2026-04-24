@@ -33,7 +33,7 @@ interface PlatformCardProps {
   connectingLabel?: string
   tokenLabel?:     string  // single-field mode placeholder
   tokenFields?:    TokenField[]  // multi-field mode (replaces tokenLabel)
-  tokenHelp?:      { url: string; text: string; linkText: string }
+  tokenHelp?:      { url: string; text: string; linkText: string; altUrl?: string; altLinkText?: string }
   connectedNote?:  string
 }
 
@@ -149,10 +149,18 @@ export function PlatformCard({
             {authType === 'token' && !hasToken && tokenHelp && (
               <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5">
                 <p className="text-[10px] text-muted-foreground leading-relaxed">{tokenHelp.text}</p>
-                <a href={tokenHelp.url} target="_blank" rel="noopener noreferrer"
-                   className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline">
-                  {tokenHelp.linkText} <ExternalLink className="h-2.5 w-2.5" />
-                </a>
+                <div className="flex items-center gap-3">
+                  <a href={tokenHelp.url} target="_blank" rel="noopener noreferrer"
+                     className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline">
+                    {tokenHelp.linkText} <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                  {tokenHelp.altUrl && (
+                    <a href={tokenHelp.altUrl} target="_blank" rel="noopener noreferrer"
+                       className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:underline">
+                      {tokenHelp.altLinkText} <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  )}
+                </div>
               </div>
             )}
             {authType === 'token' ? (

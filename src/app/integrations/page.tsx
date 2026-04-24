@@ -78,9 +78,11 @@ function IntegrationsContent() {
           authType="token"
           tokenLabel="Paste bot token…"
           tokenHelp={{
-            url:      'https://t.me/BotFather',
-            text:     'Message @BotFather on Telegram → /newbot → follow prompts. BotFather will send you a token like 123456789:AAF…. Paste it below.',
-            linkText: 'Open @BotFather',
+            url:         'tg://resolve?domain=BotFather',
+            text:        'Message @BotFather on Telegram → /newbot → follow prompts. BotFather will send you a token like 123456789:AAF…. Paste it below.',
+            linkText:    'Open in Telegram App',
+            altUrl:      'https://web.telegram.org/k/#@BotFather',
+            altLinkText: 'Open in Telegram Web',
           }}
           connectedNote="Message this bot in Telegram to have Hearth read and reply to you."
         />
