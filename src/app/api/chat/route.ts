@@ -121,6 +121,17 @@ export async function POST(req: NextRequest) {
       let loopMessages: ChatMessage[] = hasSystem ? [...messages] : [systemMsg, ...messages]
       let clarificationDone = false
 
+      function emitToolHistory() {
+        const toolMessages = loopMessages
+          .filter(m => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0))
+          .map(m => ({
+            role: m.role,
+            content: m.content.length > 2000 ? m.content.slice(0, 2000) + '\n[trimmed]' : m.content,
+            ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+          }))
+        if (toolMessages.length > 0) writeLine({ tool_history: toolMessages })
+      }
+
       for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
         let result
         try {
@@ -157,6 +168,7 @@ export async function POST(req: NextRequest) {
               continue
             }
           }
+          emitToolHistory()
           writeLine({ message: { role: 'assistant', content: assistantMsg.content }, done: false })
           writeLine({ message: { role: 'assistant', content: '' }, done: true })
           return
@@ -266,6 +278,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      emitToolHistory()
       await streamFinal(loopMessages)
     } catch (err) {
       writeLine({ error: err instanceof Error ? err.message : 'Tool loop error' })

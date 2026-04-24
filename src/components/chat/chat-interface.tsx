@@ -259,7 +259,11 @@ export function ChatInterface() {
 
     const title = convo.messages.length === 0 ? truncate(content, 40) : convo.title
     const ollamaMessages = [
-      ...convo.messages.map(m => ({ role: m.role, content: m.content })),
+      ...convo.messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
+      })),
       { role: 'user', content },
     ]
 
@@ -346,6 +350,52 @@ export function ChatInterface() {
               ChatStore.setPendingWorkflow(data.pending_workflow)
               continue
             }
+            if (data.tool_history) {
+              const now = new Date()
+              const toolMsgs = (data.tool_history as Array<{
+                role: 'assistant' | 'tool'
+                content: string
+                tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> | string } }>
+              }>).map(tm => ({
+                id: generateId(),
+                role: tm.role as Message['role'],
+                content: tm.content,
+                createdAt: now,
+                hidden: true as const,
+                ...(tm.tool_calls ? { tool_calls: tm.tool_calls } : {}),
+              }))
+
+              // Write to localStorage synchronously so persistStreamingContent (which
+              // runs synchronously on the next stream line) sees the correct order.
+              // Do NOT call saveConversations inside setConversations — React defers
+              // that callback, causing a race where persistStreamingContent runs first
+              // and then saveConversations overwrites the content back to "".
+              const rawConvos = localStorage.getItem(STORAGE_KEY)
+              if (rawConvos) {
+                try {
+                  const convos = JSON.parse(rawConvos)
+                  const idx = convos.findIndex((c: { id: string }) => c.id === convoId)
+                  if (idx !== -1) {
+                    const msgs = [...convos[idx].messages]
+                    const placeholder = msgs.pop()
+                    convos[idx].messages = [...msgs, ...toolMsgs, placeholder]
+                    convos[idx].updatedAt = new Date().toISOString()
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(convos))
+                  }
+                } catch {}
+              }
+
+              setConversations(prev => {
+                const updated = prev.map(c => {
+                  if (c.id !== convoId) return c
+                  const msgs = [...c.messages]
+                  const placeholder = msgs.pop()!
+                  return { ...c, messages: [...msgs, ...toolMsgs, placeholder], updatedAt: new Date() }
+                })
+                return updated
+              })
+              continue
+            }
             if (data.message?.content) {
               setToolStatus(null)
               ChatStore.updateToolStatus(null)
@@ -413,7 +463,7 @@ export function ChatInterface() {
     localStorage.setItem(MODEL_KEY, e.target.value)
   }
 
-  const activeMessages = activeConversation?.messages ?? []
+  const activeMessages = (activeConversation?.messages ?? []).filter(m => !m.hidden)
 
   return (
     <div className="flex h-full overflow-hidden">

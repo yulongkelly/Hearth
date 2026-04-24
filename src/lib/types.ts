@@ -1,8 +1,10 @@
 export interface Message {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   createdAt: Date
+  tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> | string } }>
+  hidden?: boolean
 }
 
 export interface Conversation {
