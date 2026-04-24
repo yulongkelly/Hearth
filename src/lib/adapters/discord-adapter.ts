@@ -91,7 +91,7 @@ export class DiscordAdapter implements BasePlatformAdapter {
     } catch (err) {
       g.status = 'error'
       g.error  = err instanceof Error ? err.message : 'Invalid token or network error'
-      this._g = undefined
+      throw err
     }
   }
 

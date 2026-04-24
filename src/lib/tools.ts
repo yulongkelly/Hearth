@@ -1,3 +1,4 @@
+import { loadConnections } from '@/lib/custom-connection-store'
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
 import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
 import { listEvents, searchEvents } from '@/lib/event-store'
@@ -388,12 +389,76 @@ const DISCORD_TOOL_DEFINITIONS = [
   },
 ]
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION]
+const WEB_SEARCH_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'web_search',
+    description: 'Search the web for API documentation, developer guides, or credential setup instructions. Use this when a user wants to connect a service you need more information about.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query, e.g. "Roborock API developer credentials documentation"' },
+      },
+      required: ['query'],
+    },
+  },
+}
+
+const REQUEST_CONNECTION_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'request_connection',
+    description: 'Show the user a credential setup form to connect a new API. Call this after web_search when you have enough info to guide the user. Include exact setup steps and a test URL to verify credentials.',
+    parameters: {
+      type: 'object',
+      properties: {
+        service:      { type: 'string', description: 'Service name shown to the user, e.g. "Roborock"' },
+        instructions: { type: 'string', description: 'Step-by-step setup instructions in plain text. Where to get the credentials, what to enable, etc.' },
+        links: {
+          type: 'array',
+          description: 'Helpful links (developer portal, docs)',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string' },
+              url:   { type: 'string' },
+            },
+            required: ['label', 'url'],
+          },
+        },
+        fields: {
+          type: 'array',
+          description: 'Credential fields the user must fill in',
+          items: {
+            type: 'object',
+            properties: {
+              name:        { type: 'string', description: 'Field key used in test_headers, e.g. "api_key"' },
+              label:       { type: 'string', description: 'Human-readable label' },
+              type:        { type: 'string', enum: ['text', 'password'], description: 'Use password for secrets' },
+              placeholder: { type: 'string' },
+            },
+            required: ['name', 'label', 'type'],
+          },
+        },
+        test_url:     { type: 'string', description: 'Endpoint to call to verify credentials. Omit if no simple test endpoint exists.' },
+        test_method:  { type: 'string', description: 'HTTP method for test call, default GET' },
+        test_headers: {
+          type: 'object',
+          description: 'Headers for test call. Use {field_name} to reference submitted credential values, e.g. {"Authorization": "Bearer {api_key}"}',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: ['service', 'instructions', 'fields'],
+    },
+  },
+}
+
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
+  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
   const messaging = getConnected().flatMap((a): object[] => {
@@ -426,6 +491,9 @@ export function toolStatusLabel(name: string): string {
     send_discord_message:  'Sending Discord message...',
     create_workflow:       'Creating workflow...',
     memory:                'Updating memory…',
+    web_search:            'Searching the web…',
+    request_connection:    'Setting up connection…',
+    http_request:          'Calling API…',
   }
   return labels[name] ?? 'Using a tool...'
 }
@@ -784,6 +852,68 @@ async function execSendMessage(platform: PlatformName, targetKey: string, args: 
   return adapter.send(target, message)
 }
 
+// ─── Web search ───────────────────────────────────────────────────────────────
+
+async function execWebSearch(args: Record<string, unknown>): Promise<string> {
+  const query = String(args.query ?? '').trim()
+  if (!query) return 'Error: query is required'
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`
+  const res = await fetch(url, { headers: { 'User-Agent': 'Hearth/1.0' } })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = await res.json() as any
+  const parts: string[] = []
+  if (data.AbstractText) parts.push(`Summary: ${data.AbstractText}\nSource: ${data.AbstractURL}`)
+  const topics = (data.RelatedTopics ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((t: any) => t.Text && t.FirstURL)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .slice(0, 6).map((t: any) => `- ${t.Text}\n  URL: ${t.FirstURL}`)
+  if (topics.length) parts.push('Related:\n' + topics.join('\n'))
+  return parts.length > 0 ? parts.join('\n\n') : 'No results found. Try a more specific query.'
+}
+
+// ─── HTTP request (custom connections) ────────────────────────────────────────
+
+async function execHttpRequest(args: Record<string, unknown>): Promise<string> {
+  const urlArg     = String(args.url ?? '')
+  const method     = String(args.method ?? 'GET').toUpperCase()
+  const connection = args.connection ? String(args.connection) : undefined
+  const bodyArg    = args.body ? String(args.body) : undefined
+  const extraHdrs  = (typeof args.headers === 'object' && args.headers !== null)
+    ? args.headers as Record<string, string> : {}
+
+  let finalUrl = urlArg
+  const headers: Record<string, string> = { ...extraHdrs }
+
+  if (connection) {
+    const conn = loadConnections().find(
+      c => c.service.toLowerCase() === connection.toLowerCase()
+    )
+    if (!conn) return `Error: No connection named "${connection}" found. Add it via chat first.`
+    if (!finalUrl.startsWith('http')) {
+      const base = (conn.testUrl ?? '').replace(/\/[^/]*$/, '')
+      finalUrl = base ? base + '/' + finalUrl.replace(/^\//, '') : finalUrl
+    }
+    if (conn.authTemplate) {
+      headers['Authorization'] = conn.authTemplate.replace(
+        /\{(\w+)\}/g, (_, k) => String(conn.credentials[k] ?? '')
+      )
+    }
+  }
+
+  if (!finalUrl.startsWith('http')) return `Error: url must be a full URL or use connection: "<name>"`
+
+  const fetchOpts: RequestInit = { method, headers }
+  if (bodyArg && method !== 'GET') {
+    fetchOpts.body = bodyArg
+    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json'
+  }
+
+  const res = await fetch(finalUrl, fetchOpts)
+  const text = await res.text()
+  return text.length > 4000 ? text.slice(0, 4000) + '\n…(truncated)' : text
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
@@ -804,6 +934,8 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'send_telegram_message': return await execSendMessage('telegram', 'target', args)
       case 'get_discord_messages':  return execGetMessages('discord', args)
       case 'send_discord_message':  return await execSendMessage('discord', 'channel', args)
+      case 'web_search':            return await execWebSearch(args)
+      case 'http_request':          return await execHttpRequest(args)
       default:                      return `Error: unknown tool "${name}"`
     }
   } catch {

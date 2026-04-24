@@ -7,6 +7,7 @@ import { GmailCard } from '@/components/integrations/gmail-card'
 import { CalendarCard } from '@/components/integrations/calendar-card'
 import { PlaidCard } from '@/components/integrations/plaid-card'
 import { PlatformCard } from '@/components/integrations/platform-card'
+import { MyConnectionsSection } from '@/components/integrations/my-connections-section'
 
 function WechatIcon({ className }: { className?: string }) {
   return (
@@ -98,10 +99,15 @@ function IntegrationsContent() {
           tokenLabel="Paste bot token…"
           tokenHelp={{
             url:      'https://discord.com/developers/applications',
-            text:     'Open Developer Portal → New Application → Bot → Reset Token. Under Privileged Intents enable Message Content Intent. Copy the token and paste it below.',
+            text:     'Open Developer Portal → New Application → Bot → Privileged Gateway Intents: enable Message Content Intent → Reset Token → copy and paste it below.',
             linkText: 'Open Developer Portal',
           }}
+          connectedNote="Messages from servers where this bot is a member are stored locally."
         />
+
+        <div className="border-t border-border pt-4">
+          <MyConnectionsSection />
+        </div>
       </div>
     </div>
   )

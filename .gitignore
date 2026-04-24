@@ -31,10 +31,16 @@ yarn-error.log*
 # misc
 .DS_Store
 .netlify/
-.claude/settings.local.json
+.claude/
 *.pem
 Thumbs.db
 
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Playwright
+tests/
+playwright.config.ts
+test-results/
+playwright-report/

@@ -15,13 +15,32 @@ export interface PendingQuestions {
   questions: ClarificationQuestion[]
 }
 
+export interface PendingConnectionField {
+  name:        string
+  label:       string
+  type:        'text' | 'password'
+  placeholder?: string
+}
+
+export interface PendingConnection {
+  id:           string
+  service:      string
+  instructions: string
+  links:        Array<{ label: string; url: string }>
+  fields:       PendingConnectionField[]
+  test_url?:    string
+  test_method?: string
+  test_headers?: Record<string, string>
+}
+
 export interface ChatStreamState {
-  convoId:          string
-  toolStatus:       string | null
-  pendingApprovals: PendingApproval[]
-  pendingQuestions: PendingQuestions | null
-  pendingTool:      UserTool | null
-  pendingWorkflow:  WorkflowTool | null
+  convoId:           string
+  toolStatus:        string | null
+  pendingApprovals:  PendingApproval[]
+  pendingQuestions:  PendingQuestions | null
+  pendingConnection: PendingConnection | null
+  pendingTool:       UserTool | null
+  pendingWorkflow:   WorkflowTool | null
 }
 
 let activeStream: ChatStreamState | null = null
@@ -37,7 +56,7 @@ export function startStream(convoId: string, ctrl: AbortController): void {
   abortCtrl    = ctrl
   activeStream = {
     convoId, toolStatus: null,
-    pendingApprovals: [], pendingQuestions: null,
+    pendingApprovals: [], pendingQuestions: null, pendingConnection: null,
     pendingTool: null, pendingWorkflow: null,
   }
   emit()
@@ -64,6 +83,12 @@ export function removePendingApproval(id: string): void {
 export function setPendingQuestions(q: PendingQuestions | null): void {
   if (!activeStream) return
   activeStream = { ...activeStream, pendingQuestions: q }
+  emit()
+}
+
+export function setPendingConnection(c: PendingConnection | null): void {
+  if (!activeStream) return
+  activeStream = { ...activeStream, pendingConnection: c }
   emit()
 }
 

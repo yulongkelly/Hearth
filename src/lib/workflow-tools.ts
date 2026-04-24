@@ -27,7 +27,7 @@ export interface WorkflowRun {
   createdAt: string
 }
 
-export const TOOL_WHITELIST = ['get_calendar_events', 'get_inbox', 'read_email', 'get_transactions'] as const
+export const TOOL_WHITELIST = ['get_calendar_events', 'get_inbox', 'read_email', 'get_transactions', 'http_request'] as const
 export const ACTION_WHITELIST = ['merge_lists', 'detect_conflicts', 'filter_events', 'summarize'] as const
 
 export const UI_MAP: Record<string, string> = {
@@ -35,6 +35,7 @@ export const UI_MAP: Record<string, string> = {
   get_inbox:           'Get emails',
   read_email:          'Read email',
   get_transactions:    'Get bank transactions',
+  http_request:        'HTTP Request',
   merge_lists:         'Combine results',
   detect_conflicts:    'Detect conflicts',
   filter_events:       'Filter events',

@@ -33,6 +33,7 @@ function normalizeName(name: string): string {
   if (n.includes('conflict'))                                    return 'detect_conflicts'
   if (n.includes('filter'))                                      return 'filter_events'
   if (n.includes('summar'))                                      return 'summarize'
+  if (n === 'http' || n === 'request' || n === 'fetch' || n.includes('api_call') || n.includes('rest') || n.includes('http_req')) return 'http_request'
   return name
 }
 
