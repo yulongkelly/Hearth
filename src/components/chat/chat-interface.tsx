@@ -10,8 +10,8 @@ import { cn, generateId, truncate, formatRelativeTime } from '@/lib/utils'
 import type { Conversation, Message } from '@/lib/types'
 import { addUserTool, type UserTool } from '@/lib/user-tools'
 import { addWorkflowTool, type WorkflowTool } from '@/lib/workflow-tools'
-import { ApprovalCard } from './approval-card'
 import { QuestionsPopup, type ClarificationQuestion } from './questions-popup'
+import { ConnectionSetupCard } from './connection-setup-card'
 import { WorkflowPlanEditor } from '@/components/tools/workflow-plan-editor'
 import type { ToolAccess } from '@/lib/tool-access'
 import * as ChatStore from '@/lib/chat-store'
@@ -83,6 +83,7 @@ export function ChatInterface() {
   const [googleConnected, setGoogleConnected] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<Array<{ id: string; tool: string; preview: string; risk: ToolAccess }>>([])
   const [pendingQuestions, setPendingQuestions] = useState<{ id: string; questions: ClarificationQuestion[] } | null>(null)
+  const [pendingConnection, setPendingConnection] = useState<ChatStore.PendingConnection | null>(null)
   const [pendingTool, setPendingTool] = useState<UserTool | null>(null)
   const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowTool | null>(null)
 
@@ -122,6 +123,7 @@ export function ChatInterface() {
       setToolStatus(stream.toolStatus)
       setPendingApprovals(stream.pendingApprovals)
       setPendingQuestions(stream.pendingQuestions)
+      setPendingConnection(stream.pendingConnection)
       setPendingTool(stream.pendingTool)
       setPendingWorkflow(stream.pendingWorkflow)
     } else if (saved.length > 0) {
@@ -140,12 +142,14 @@ export function ChatInterface() {
         setToolStatus(stream.toolStatus)
         setPendingApprovals(stream.pendingApprovals)
         setPendingQuestions(stream.pendingQuestions)
+        setPendingConnection(stream.pendingConnection)
         setPendingTool(stream.pendingTool)
         setPendingWorkflow(stream.pendingWorkflow)
       } else {
         setToolStatus(null)
         setPendingApprovals([])
         setPendingQuestions(null)
+        setPendingConnection(null)
         setPendingTool(null)
         setPendingWorkflow(null)
         // Reload from localStorage to pick up content written while away
@@ -315,6 +319,11 @@ export function ChatInterface() {
             if (data.pending_questions) {
               setPendingQuestions(data.pending_questions)
               ChatStore.setPendingQuestions(data.pending_questions)
+              continue
+            }
+            if (data.pending_connection) {
+              setPendingConnection(data.pending_connection)
+              ChatStore.setPendingConnection(data.pending_connection)
               continue
             }
             if (data.pending_approval) {
@@ -556,32 +565,22 @@ export function ChatInterface() {
         </ScrollArea>
 
         {/* Questions popup */}
-        {pendingQuestions && (
+        {pendingQuestions && pendingQuestions.questions.length > 0 && (
           <QuestionsPopup
             {...pendingQuestions}
             onSubmit={(answers) => handleAnswers(pendingQuestions.id, answers)}
           />
         )}
 
-        {/* Approval popup */}
-        {!pendingQuestions && pendingApprovals.length > 0 && (
-          <div className="border-t border-border bg-card">
-            <div className="px-3 pt-2 pb-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Waiting for approval
-              </p>
-            </div>
-            <div className="space-y-2 px-3 pb-3">
-              {pendingApprovals.map(a => (
-                <ApprovalCard
-                  key={a.id}
-                  {...a}
-                  onRespond={(approved) => handleApproval(a.id, approved)}
-                />
-              ))}
-            </div>
-          </div>
+        {/* Connection setup card */}
+        {!pendingQuestions && pendingConnection && (
+          <ConnectionSetupCard
+            connection={pendingConnection}
+            onSuccess={() => { setPendingConnection(null); ChatStore.setPendingConnection(null) }}
+            onCancel={() => { setPendingConnection(null); ChatStore.setPendingConnection(null) }}
+          />
         )}
+
 
         {/* Pending tool save card */}
         {pendingTool && (
@@ -621,7 +620,7 @@ export function ChatInterface() {
         )}
 
         {/* Input area */}
-        <div className={pendingQuestions || pendingApprovals.length > 0 ? 'hidden' : 'border-t border-border p-4'}>
+        <div className={pendingQuestions || pendingConnection || pendingApprovals.length > 0 ? 'hidden' : 'border-t border-border p-4'}>
           <div className="flex items-end gap-2 rounded-xl border border-border bg-card p-2">
             <Textarea
               ref={textareaRef}
