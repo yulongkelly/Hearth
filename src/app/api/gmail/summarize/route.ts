@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { OLLAMA_BASE_URL } from '@/lib/ollama'
+import { getModelAdapter } from '@/lib/adapters/registry'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,26 +9,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing body or model' }, { status: 400 })
   }
 
-  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  try {
+    const adapter = getModelAdapter()
+    const result  = await adapter.chat({
       model,
-      stream: false,
       messages: [
         {
-          role: 'user',
+          role:    'user',
           content: `Summarize this email in 2-3 sentences. Be concise and highlight the key action items or important information.\n\n${body.slice(0, 4000)}`,
         },
       ],
-    }),
-    signal: AbortSignal.timeout(30_000),
-  })
-
-  if (!res.ok) {
-    return NextResponse.json({ error: 'Ollama error' }, { status: res.status })
+      signal: AbortSignal.timeout(30_000),
+    })
+    return NextResponse.json({ summary: result.content })
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'LLM error' }, { status: 502 })
   }
-
-  const data = await res.json()
-  return NextResponse.json({ summary: data.message?.content ?? '' })
 }

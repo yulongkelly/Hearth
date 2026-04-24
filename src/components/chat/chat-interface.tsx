@@ -167,7 +167,7 @@ export function ChatInterface() {
           localStorage.setItem(MODEL_KEY, names[0])
         }
       })
-      .catch(() => setOllamaError('Cannot connect to Ollama'))
+      .catch(() => setOllamaError('Cannot connect to the AI model'))
   }, [selectedModel])
 
   useEffect(() => {
@@ -282,7 +282,7 @@ export function ChatInterface() {
     ChatStore.startStream(convoId!, ctrl)
 
     try {
-      const res = await fetch('/api/ollama/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: selectedModel, messages: ollamaMessages, memoryThreshold: loadMemoryThreshold() }),

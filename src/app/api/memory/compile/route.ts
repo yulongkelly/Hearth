@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { OLLAMA_BASE_URL } from '@/lib/ollama'
+import { getModelAdapter } from '@/lib/adapters/registry'
 import { listEvents } from '@/lib/event-store'
 import { readMemory, addEntry } from '@/lib/memory-store'
 
@@ -42,21 +42,18 @@ Skip one-off actions, obvious facts, or anything already in current memory.
 Output ONLY the entries to add, one per line, each starting with "- ".
 If nothing useful to add, respond with exactly: nothing to add`
 
-  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  let output: string
+  try {
+    const adapter = getModelAdapter()
+    const result  = await adapter.chat({
       model,
       messages: [{ role: 'user', content: prompt }],
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  })
-
-  if (!res.ok) return NextResponse.json({ error: 'LLM request failed' }, { status: 502 })
-
-  const data   = await res.json()
-  const output = String(data?.message?.content ?? '').trim()
+      signal: AbortSignal.timeout(60_000),
+    })
+    output = result.content.trim()
+  } catch {
+    return NextResponse.json({ error: 'LLM request failed' }, { status: 502 })
+  }
 
   if (!output || output.toLowerCase().startsWith('nothing to add')) {
     return NextResponse.json({ added: 0, entries: [], message: 'Nothing to add.' })

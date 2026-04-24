@@ -94,7 +94,7 @@ export function ToolPage({ id }: { id: string }) {
     const prompt = interpolatePrompt(tool.prompt, params)
 
     try {
-      const res = await fetch('/api/ollama/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),

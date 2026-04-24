@@ -1,4 +1,4 @@
-import { OLLAMA_BASE_URL } from './ollama'
+import { getModelAdapter } from './adapters/registry'
 import { validatePage, type CardPage, type TextPage } from './ui-schema'
 
 export async function executeAction(
@@ -162,22 +162,16 @@ async function execSummarize(params: Record<string, unknown>, context: Record<st
 
   if (!model) return fallback
   try {
-    const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: SCHEMA_SYSTEM },
-          { role: 'user',   content: `${String(params.instruction ?? 'Convert this data into the JSON schema')}:\n\n${data.slice(0, 4000)}` },
-        ],
-        stream: false,
-      }),
+    const adapter = getModelAdapter()
+    const llmResult = await adapter.chat({
+      model,
+      messages: [
+        { role: 'system', content: SCHEMA_SYSTEM },
+        { role: 'user',   content: `${String(params.instruction ?? 'Convert this data into the JSON schema')}:\n\n${data.slice(0, 4000)}` },
+      ],
       signal: AbortSignal.timeout(120_000),
     })
-    if (!res.ok) return fallback
-    const json  = await res.json()
-    const raw   = extractRawJSON(json.message?.content ?? '')
+    const raw = extractRawJSON(llmResult.content)
     if (!raw) return fallback
     // Validate it — if LLM produced garbage, degrade gracefully
     const page = validatePage(raw)
