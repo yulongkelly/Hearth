@@ -1,6 +1,8 @@
 import path from 'path'
 import os from 'os'
 import { readEncryptedText, writeEncryptedText } from './secure-storage'
+import { validateMemoryEntry } from './memory-validator'
+import { isSemanticDuplicate } from './memory-retrieval'
 
 const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
 const MEMORY_DIR  = path.join(HEARTH_DIR, 'memory')
@@ -128,4 +130,90 @@ export function writeFullMemory(target: MemoryTarget, content: string): string {
   if (err) return err
   writeAtomic(target, content)
   return 'Memory saved.'
+}
+
+export function readMemoryEntries(target: MemoryTarget): string[] {
+  return parseEntries(readRaw(target))
+}
+
+// ─── Internal helpers used by flush (skip security scan — validator already ran) ─
+
+function addEntryDirect(target: MemoryTarget, content: string): void {
+  const entries = dedup([...parseEntries(readRaw(target)), content.trim()])
+  writeAtomic(target, serialize(entries))
+}
+
+function replaceEntryDirect(target: MemoryTarget, old: string, next: string): void {
+  const entries = parseEntries(readRaw(target))
+  const idx = entries.findIndex(e => e.includes(old.trim()))
+  if (idx === -1) {
+    addEntryDirect(target, next)
+    return
+  }
+  entries[idx] = next.trim()
+  writeAtomic(target, serialize(dedup(entries)))
+}
+
+// ─── Deferred write queue ─────────────────────────────────────────────────────
+
+type QueueAction = 'add' | 'replace' | 'remove'
+
+interface QueuedWrite {
+  target: MemoryTarget
+  action: QueueAction
+  content: string
+  oldContent?: string
+}
+
+let writeQueue: QueuedWrite[] = []
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let _ollamaUrl = 'http://localhost:11434'
+let _model = ''
+const DEBOUNCE_MS = 5000
+
+export function queueMemoryWrite(
+  target: MemoryTarget,
+  action: QueueAction,
+  content: string,
+  ollamaUrl: string,
+  model: string,
+  oldContent?: string,
+): void {
+  _ollamaUrl = ollamaUrl
+  _model = model
+  writeQueue.push({ target, action, content, oldContent })
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    flushMemoryQueue(_ollamaUrl, _model).catch(() => {})
+  }, DEBOUNCE_MS)
+}
+
+export async function flushMemoryQueue(ollamaUrl?: string, model?: string): Promise<void> {
+  if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null }
+  if (writeQueue.length === 0) return
+
+  const batch = writeQueue.splice(0)
+  const url = ollamaUrl ?? _ollamaUrl
+  const mdl = model ?? _model
+
+  for (const item of batch) {
+    if (item.action === 'add') {
+      const v = validateMemoryEntry(item.content)
+      if (!v.valid) continue
+
+      const existing = readMemoryEntries(item.target)
+      const { isDuplicate, matchedEntry } = await isSemanticDuplicate(
+        item.content, existing, url, mdl
+      )
+      if (isDuplicate && matchedEntry) {
+        replaceEntryDirect(item.target, matchedEntry, item.content)
+      } else {
+        addEntryDirect(item.target, item.content)
+      }
+    } else if (item.action === 'replace') {
+      replaceEntry(item.target, item.oldContent ?? '', item.content)
+    } else if (item.action === 'remove') {
+      removeEntry(item.target, item.oldContent ?? '')
+    }
+  }
 }

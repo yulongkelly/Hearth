@@ -1,4 +1,7 @@
 import { NextRequest } from 'next/server'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
 import { getModelAdapter } from '@/lib/adapters/registry'
 import type { ChatMessage } from '@/lib/model-adapter'
 import { getAvailableTools, toolStatusLabel } from '@/lib/tools'
@@ -6,11 +9,48 @@ import { buildTask } from '@/lib/butler/task-builder'
 import { executeTask } from '@/lib/butler/executor'
 import { waitForAnswers } from '@/lib/questions-store'
 import { waitForConnection } from '@/lib/connection-answer-store'
-import { readMemory, readMemoryTrimmed, addEntry, replaceEntry, removeEntry } from '@/lib/memory-store'
+import { readMemory, readMemoryTrimmed, readMemoryEntries, queueMemoryWrite, flushMemoryQueue, replaceEntry, removeEntry } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
+import { validateMemoryEntry } from '@/lib/memory-validator'
+import { retrieveRelevantMemory } from '@/lib/memory-retrieval'
 import { compile, compileRetryPrompt } from '@/lib/workflow-compiler'
 import type { WorkflowTool } from '@/lib/workflow-tools'
 import { appendEvent } from '@/lib/event-store'
+import { OLLAMA_BASE_URL } from '@/lib/ollama'
+
+// ─── hearth.md — user-editable static instructions, always loaded ─────────────
+
+const HEARTH_MD_PATH = path.join(os.homedir(), '.hearth', 'memory', 'hearth.md')
+const HEARTH_MD_TEMPLATE = `# Hearth — Standing Instructions
+
+## Tool Usage Rules
+- Always confirm before sending any email or message
+- Never save raw API responses to memory — save conclusions only
+
+## User Policies
+(Add your own policies here)
+
+## Restrictions
+(Add restrictions here)
+`
+
+function ensureHearthMd(): void {
+  if (!fs.existsSync(HEARTH_MD_PATH)) {
+    const dir = path.dirname(HEARTH_MD_PATH)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(HEARTH_MD_PATH, HEARTH_MD_TEMPLATE, { encoding: 'utf-8', mode: 0o600 })
+  }
+}
+
+function loadHearthMd(): string {
+  try {
+    const content = fs.readFileSync(HEARTH_MD_PATH, 'utf-8')
+    if (content.length > 2000) return content.slice(0, 2000) + '\n…(hearth.md truncated — keep it concise)'
+    return content
+  } catch { return '' }
+}
+
+ensureHearthMd()
 
 const EVENT_SKIP = new Set(['memory', 'ask_clarification', 'create_workflow', 'query_events', 'web_search', 'request_connection'])
 
@@ -84,11 +124,22 @@ export async function POST(req: NextRequest) {
   const totalCharBudget = Math.floor(contextLength * memoryThreshold * AVG_CHARS_PER_TOKEN)
   const perFileBudget = Math.floor(totalCharBudget / 2)
 
-  const memBlock  = readMemoryTrimmed('memory', perFileBudget)
+  // Static context: always loaded in full
+  const hearthMd  = loadHearthMd()
   const userBlock = readMemoryTrimmed('user', perFileBudget)
+
+  // Dynamic context: embed the last user message, retrieve top-5 relevant memory entries
+  const lastUserMsg = [...(messages as ChatMessage[])].reverse()
+    .find(m => m.role === 'user')?.content ?? ''
+  const ollamaUrl = OLLAMA_BASE_URL
+  const memoryEntries = readMemoryEntries('memory')
+  const relevantEntries = await retrieveRelevantMemory(lastUserMsg, memoryEntries, 5, ollamaUrl, model)
+  const memBlock = relevantEntries.join('\n§\n')
+
   const memorySection = [
-    memBlock  ? `<memory>\n${memBlock}\n</memory>`                  : '',
+    hearthMd  ? `<hearth>\n${hearthMd}\n</hearth>`              : '',
     userBlock ? `<user_profile>\n${userBlock}\n</user_profile>` : '',
+    memBlock  ? `<memory>\n${memBlock}\n</memory>`              : '',
   ].filter(Boolean).join('\n\n')
 
   const todayLine = `Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Use this when computing date ranges or referencing days of the week.`
@@ -188,11 +239,22 @@ export async function POST(req: NextRequest) {
               const { action, target, content = '', old_content = '' } = args as Record<string, string>
               const t = (target === 'memory' || target === 'user') ? target as MemoryTarget : 'memory'
               switch (action) {
-                case 'read':    return readMemory(t)
-                case 'add':     return addEntry(t, content)
-                case 'replace': return replaceEntry(t, old_content, content)
-                case 'remove':  return removeEntry(t, old_content)
-                default:        return 'Error: unknown memory action'
+                case 'read': return readMemory(t)
+                case 'add': {
+                  const v = validateMemoryEntry(content)
+                  if (!v.valid) return `Rejected: ${v.reason}. Rewrite as a concise stable fact.`
+                  queueMemoryWrite(t, 'add', content, ollamaUrl, model)
+                  return 'Queued.'
+                }
+                case 'replace': {
+                  queueMemoryWrite(t, 'replace', content, ollamaUrl, model, old_content)
+                  return 'Queued.'
+                }
+                case 'remove': {
+                  queueMemoryWrite(t, 'remove', old_content, ollamaUrl, model)
+                  return 'Queued.'
+                }
+                default: return 'Error: unknown memory action'
               }
             }
 
@@ -285,6 +347,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       writeLine({ error: err instanceof Error ? err.message : 'Tool loop error' })
     } finally {
+      await flushMemoryQueue(ollamaUrl, model).catch(() => {})
       try { await writer.close() } catch {}
     }
   })()
