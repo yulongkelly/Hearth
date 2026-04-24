@@ -1,6 +1,8 @@
 import { OLLAMA_BASE_URL } from '@/lib/ollama'
 import type { ModelAdapter, ChatOptions, ChatResult } from '@/lib/model-adapter'
 
+const contextLengthCache = new Map<string, number>()
+
 export class OllamaAdapter implements ModelAdapter {
   async chat(opts: ChatOptions): Promise<ChatResult> {
     const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
@@ -46,6 +48,7 @@ export class OllamaAdapter implements ModelAdapter {
   }
 
   async getContextLength(model: string): Promise<number> {
+    if (contextLengthCache.has(model)) return contextLengthCache.get(model)!
     try {
       const res = await fetch(`${OLLAMA_BASE_URL}/api/show`, {
         method: 'POST',
@@ -55,9 +58,11 @@ export class OllamaAdapter implements ModelAdapter {
       })
       if (!res.ok) return 4096
       const info = await res.json()
-      return info?.model_info?.context_length
-          ?? info?.model_info?.['llama.context_length']
-          ?? 4096
+      const len = info?.model_info?.context_length
+               ?? info?.model_info?.['llama.context_length']
+               ?? 4096
+      contextLengthCache.set(model, len)
+      return len
     } catch { return 4096 }
   }
 }

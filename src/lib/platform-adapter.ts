@@ -1,4 +1,4 @@
-export const PLATFORMS = ['wechat', 'qq', 'telegram', 'discord'] as const
+export const PLATFORMS = ['wechat', 'qq', 'telegram', 'discord', 'slack', 'whatsapp', 'matrix', 'email', 'mattermost'] as const
 export type PlatformName = typeof PLATFORMS[number]
 
 export type ConnectStatus = 'stopped' | 'scanning' | 'connecting' | 'connected' | 'error'

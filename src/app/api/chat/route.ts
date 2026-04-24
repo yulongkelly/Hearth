@@ -36,7 +36,7 @@ CONNECTING NEW SERVICES: When the user wants to connect or use an external API o
 
 http_request step params: url (full URL or path relative to connection base), method (GET/POST/etc.), body (JSON string, optional), connection (name of registered connection), headers (extra headers, optional).
 
-You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked.`
+You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Do NOT save which integrations or bots are connected — you can tell what's connected by which tools are available to you (e.g. if get_qq_messages is in your tool list, QQ is connected). Store user preferences and personal details, not system state.`
 
 function parseQuestionsFromText(text: string): Array<{ question: string; options: string[] }> | null {
   // Split on lines that start a new numbered question

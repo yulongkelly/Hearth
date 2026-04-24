@@ -81,6 +81,19 @@ function createWindow() {
     if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' })
   })
 
+  // In dev, the Next.js server can restart mid-session. Retry loading until
+  // it responds rather than leaving the window on a connection-error page.
+  if (isDev) {
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode) => {
+      // -102 = ERR_CONNECTION_REFUSED — server is down, keep retrying
+      if (errorCode === -102) {
+        setTimeout(() => {
+          if (mainWindow) mainWindow.loadURL(`http://127.0.0.1:${PORT}`)
+        }, 1000)
+      }
+    })
+  }
+
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
       e.preventDefault()

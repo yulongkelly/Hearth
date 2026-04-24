@@ -62,7 +62,7 @@ const MEMORY_TOOL_DEFINITION = {
     description: `Manage your persistent memory across sessions. Use this to remember facts about the user and your environment.
 
 WHEN TO SAVE: user states a preference or habit, corrects you, shares personal details (name, role, timezone, tech stack), you learn a project convention or API quirk.
-WHEN NOT TO SAVE: task progress, session outcomes, completed TODOs, raw data dumps.
+WHEN NOT TO SAVE: task progress, session outcomes, completed TODOs, raw data dumps, which integrations or bots are connected (that is reflected in your available tools — if get_qq_messages is in your tool list, QQ is connected; no need to memorize it).
 
 Proactively save useful facts — do not wait to be asked.`,
     parameters: {

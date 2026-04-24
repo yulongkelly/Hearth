@@ -18,14 +18,26 @@ async function ensureRegistered(): Promise<void> {
     { QqAdapter },
     { TelegramAdapter },
     { DiscordAdapter },
+    { SlackAdapter },
+    { WhatsAppAdapter },
+    { MatrixAdapter },
+    { EmailAdapter },
+    { MattermostAdapter },
   ] = await Promise.all([
     import('./adapters/wechat-adapter'),
     import('./adapters/qq-adapter'),
     import('./adapters/telegram-adapter'),
     import('./adapters/discord-adapter'),
+    import('./adapters/slack-adapter'),
+    import('./adapters/whatsapp-adapter'),
+    import('./adapters/matrix-adapter'),
+    import('./adapters/email-adapter'),
+    import('./adapters/mattermost-adapter'),
   ])
-  ;[new WechatAdapter(), new QqAdapter(), new TelegramAdapter(), new DiscordAdapter()]
-    .forEach(a => registry().set(a.name, a))
+  ;[
+    new WechatAdapter(), new QqAdapter(), new TelegramAdapter(), new DiscordAdapter(),
+    new SlackAdapter(), new WhatsAppAdapter(), new MatrixAdapter(), new EmailAdapter(), new MattermostAdapter(),
+  ].forEach(a => registry().set(a.name, a))
 }
 
 export function register(adapter: BasePlatformAdapter): void {

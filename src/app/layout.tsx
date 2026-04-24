@@ -23,7 +23,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={inter.className}>
+      <body className={inter.className} style={{ backgroundColor: '#0a0a0f' }}>
         <div className="flex h-screen overflow-hidden bg-background">
           {/* Desktop sidebar — hidden on mobile */}
           <Sidebar />
