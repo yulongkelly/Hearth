@@ -2,14 +2,8 @@ import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens }
 import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
 import { listEvents, searchEvents } from '@/lib/event-store'
 import type { HearthEvent } from '@/lib/event-store'
-import { getBotState, sendWechatMessage } from '@/lib/wechat-bot'
-import { queryMessages } from '@/lib/wechat-store'
-import { getQqState, sendQqMessage } from '@/lib/qq-bot'
-import { queryQqMessages } from '@/lib/qq-store'
-import { getTelegramState, sendTelegramMessage } from '@/lib/telegram-bot'
-import { queryTelegramMessages } from '@/lib/telegram-store'
-import { getDiscordState, sendDiscordMessage } from '@/lib/discord-bot'
-import { queryDiscordMessages } from '@/lib/discord-store'
+import { get as getAdapter, getConnected } from '@/lib/platform-registry'
+import type { PlatformName } from '@/lib/platform-adapter'
 
 // ─── Tool definitions (Ollama function-calling format) ────────────────────────
 
@@ -312,11 +306,11 @@ const QQ_TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'send_qq_message',
-      description: 'Send a QQ message to a contact or group by their QQ number.',
+      description: 'Send a QQ message to a user or group via the Official QQ Bot API using their openid. Requires a recent incoming message from the target for passive replies.',
       parameters: {
         type: 'object',
         properties: {
-          target:  { type: 'string', description: "The recipient's QQ number (for private) or group number." },
+          target:  { type: 'string', description: "The recipient's openid (user_openid for DMs, group_openid for groups) — obtained from a received message." },
           message: { type: 'string', description: 'The message text to send.' },
         },
         required: ['target', 'message'],
@@ -402,11 +396,14 @@ export function getAvailableTools() {
   const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
-  const wechat   = getBotState().status === 'connected'    ? WECHAT_TOOL_DEFINITIONS    : []
-  const qq       = getQqState().status === 'connected'      ? QQ_TOOL_DEFINITIONS        : []
-  const telegram = getTelegramState().status === 'connected' ? TELEGRAM_TOOL_DEFINITIONS : []
-  const discord  = getDiscordState().status === 'connected'  ? DISCORD_TOOL_DEFINITIONS  : []
-  return [...always, ...google, ...plaid, ...wechat, ...qq, ...telegram, ...discord]
+  const messaging = getConnected().flatMap((a): object[] => {
+    if (a.name === 'wechat')   return WECHAT_TOOL_DEFINITIONS
+    if (a.name === 'qq')       return QQ_TOOL_DEFINITIONS
+    if (a.name === 'telegram') return TELEGRAM_TOOL_DEFINITIONS
+    if (a.name === 'discord')  return DISCORD_TOOL_DEFINITIONS
+    return []
+  })
+  return [...always, ...google, ...plaid, ...messaging]
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -759,98 +756,32 @@ async function execGetTransactions(args: Record<string, unknown>): Promise<strin
   ].filter(Boolean).join('\n')).join('\n\n---\n\n')
 }
 
-// ─── WeChat executors ─────────────────────────────────────────────────────────
+// ─── Messaging executors (shared) ─────────────────────────────────────────────
 
-function execGetWechatMessages(args: Record<string, unknown>): string {
-  const contact = args.contact ? String(args.contact) : undefined
-  const days    = Math.min(Number(args.days)  || 7,  90)
-  const limit   = Math.min(Number(args.limit) || 50, 200)
-  const messages = queryMessages({ contact, days, limit })
-  if (!messages.length) return 'No WeChat messages found for the specified filters.'
-  return messages.map(m => [
-    `From: ${m.from}`,
-    m.room ? `Group: ${m.room}` : null,
-    `Time: ${m.timestamp}`,
-    `Message: ${m.text}`,
-  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
-}
-
-async function execSendWechatMessage(args: Record<string, unknown>): Promise<string> {
-  const contact = String(args.contact ?? '')
-  const message = String(args.message ?? '')
-  if (!contact || !message) return 'Error: contact and message are required.'
-  return sendWechatMessage(contact, message)
-}
-
-// ─── QQ executors ────────────────────────────────────────────────────────────
-
-function execGetQqMessages(args: Record<string, unknown>): string {
-  const contact = args.contact ? String(args.contact) : undefined
-  const days    = Math.min(Number(args.days)  || 7,  90)
-  const limit   = Math.min(Number(args.limit) || 50, 200)
-  const messages = queryQqMessages({ contact, days, limit })
-  if (!messages.length) return 'No QQ messages found for the specified filters.'
-  return messages.map(m => [
-    `From: ${m.from} (${m.uin})`,
-    m.room ? `Group: ${m.room}` : null,
-    `Time: ${m.timestamp}`,
-    `Message: ${m.text}`,
-  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
-}
-
-async function execSendQqMessage(args: Record<string, unknown>): Promise<string> {
-  const target  = String(args.target  ?? '')
-  const message = String(args.message ?? '')
-  if (!target || !message) return 'Error: target and message are required.'
-  return sendQqMessage(target, message)
-}
-
-// ─── Telegram executors ───────────────────────────────────────────────────────
-
-function execGetTelegramMessages(args: Record<string, unknown>): string {
-  const contact = args.contact ? String(args.contact) : undefined
-  const days    = Math.min(Number(args.days)  || 7,  90)
-  const limit   = Math.min(Number(args.limit) || 50, 200)
-  const messages = queryTelegramMessages({ contact, days, limit })
-  if (!messages.length) return 'No Telegram messages found for the specified filters.'
-  return messages.map(m => [
-    `From: ${m.from}`,
-    m.chatTitle ? `Chat: ${m.chatTitle}` : `Chat ID: ${m.chatId}`,
-    `Time: ${m.timestamp}`,
-    `Message: ${m.text}`,
-  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
-}
-
-async function execSendTelegramMessage(args: Record<string, unknown>): Promise<string> {
-  const target  = String(args.target  ?? '')
-  const message = String(args.message ?? '')
-  if (!target || !message) return 'Error: target and message are required.'
-  return sendTelegramMessage(target, message)
-}
-
-// ─── Discord executors ────────────────────────────────────────────────────────
-
-function execGetDiscordMessages(args: Record<string, unknown>): string {
+function execGetMessages(platform: PlatformName, args: Record<string, unknown>): string {
+  const adapter = getAdapter(platform)
+  if (!adapter || adapter.getState().status !== 'connected') return `Error: ${platform} is not connected.`
   const contact = args.contact ? String(args.contact) : undefined
   const channel = args.channel ? String(args.channel) : undefined
   const days    = Math.min(Number(args.days)  || 7,  90)
   const limit   = Math.min(Number(args.limit) || 50, 200)
-  const messages = queryDiscordMessages({ contact, channel, days, limit })
-  if (!messages.length) return 'No Discord messages found for the specified filters.'
+  const messages = adapter.queryMessages({ contact, channel, days, limit })
+  if (!messages.length) return `No ${platform} messages found for the specified filters.`
   return messages.map(m => [
     `From: ${m.from}`,
-    m.guild   ? `Server: ${m.guild}`   : null,
-    m.channel ? `Channel: #${m.channel}` : null,
+    m.room ? `Group/Channel: ${m.room}` : null,
     `Time: ${m.timestamp}`,
     `Message: ${m.text}`,
   ].filter(Boolean).join('\n')).join('\n\n---\n\n')
 }
 
-async function execSendDiscordMessage(args: Record<string, unknown>): Promise<string> {
-  const channel = String(args.channel ?? '')
-  const message = String(args.message ?? '')
-  if (!channel || !message) return 'Error: channel and message are required.'
-  return sendDiscordMessage(channel, message)
+async function execSendMessage(platform: PlatformName, targetKey: string, args: Record<string, unknown>): Promise<string> {
+  const target  = String(args[targetKey] ?? '')
+  const message = String(args.message    ?? '')
+  if (!target || !message) return `Error: ${targetKey} and message are required.`
+  const adapter = getAdapter(platform)
+  if (!adapter || adapter.getState().status !== 'connected') return `Error: ${platform} is not connected.`
+  return adapter.send(target, message)
 }
 
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
@@ -865,14 +796,14 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'get_calendar_events':   return await execGetCalendarEvents(args)
       case 'get_transactions':      return await execGetTransactions(args)
       case 'query_events':          return execQueryEvents(args)
-      case 'get_wechat_messages':   return execGetWechatMessages(args)
-      case 'send_wechat_message':   return await execSendWechatMessage(args)
-      case 'get_qq_messages':       return execGetQqMessages(args)
-      case 'send_qq_message':       return await execSendQqMessage(args)
-      case 'get_telegram_messages': return execGetTelegramMessages(args)
-      case 'send_telegram_message': return await execSendTelegramMessage(args)
-      case 'get_discord_messages':  return execGetDiscordMessages(args)
-      case 'send_discord_message':  return await execSendDiscordMessage(args)
+      case 'get_wechat_messages':   return execGetMessages('wechat', args)
+      case 'send_wechat_message':   return await execSendMessage('wechat', 'contact', args)
+      case 'get_qq_messages':       return execGetMessages('qq', args)
+      case 'send_qq_message':       return await execSendMessage('qq', 'target', args)
+      case 'get_telegram_messages': return execGetMessages('telegram', args)
+      case 'send_telegram_message': return await execSendMessage('telegram', 'target', args)
+      case 'get_discord_messages':  return execGetMessages('discord', args)
+      case 'send_discord_message':  return await execSendMessage('discord', 'channel', args)
       default:                      return `Error: unknown tool "${name}"`
     }
   } catch {
