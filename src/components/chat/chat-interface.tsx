@@ -30,18 +30,53 @@ function loadMemoryThreshold(): number {
   } catch { return 0.20 }
 }
 
+const MAX_CONVERSATIONS = 50
+const STALE_HIDDEN_MS   = 7 * 24 * 60 * 60 * 1000  // 7 days
+
+// Applies two policies: cap total conversations and strip hidden tool messages from
+// conversations that haven't been touched in 7+ days (their findings should be in
+// memory files by then; raw tool traces are no longer useful for context).
+function cleanConversations(convos: Conversation[]): Conversation[] {
+  const cutoff = Date.now() - STALE_HIDDEN_MS
+  return convos
+    .slice(0, MAX_CONVERSATIONS)
+    .map(c =>
+      new Date(c.updatedAt).getTime() < cutoff
+        ? { ...c, messages: c.messages.filter(m => !m.hidden) }
+        : c
+    )
+}
+
+function safeSetItem(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      try {
+        const existing = localStorage.getItem(key)
+        if (existing) {
+          const arr = JSON.parse(existing) as Conversation[]
+          const half = arr.slice(0, Math.ceil(arr.length / 2))
+          localStorage.setItem(key, JSON.stringify(half))
+        }
+      } catch {}
+    }
+  }
+}
+
 function loadConversations(): Conversation[] {
   if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return parsed.map((c: Conversation) => ({
+    const reconstructed = parsed.map((c: Conversation) => ({
       ...c,
       createdAt: new Date(c.createdAt),
       updatedAt: new Date(c.updatedAt),
       messages: c.messages.map((m: Message) => ({ ...m, createdAt: new Date(m.createdAt) })),
     }))
+    return cleanConversations(reconstructed)
   } catch {
     return []
   }
@@ -49,7 +84,7 @@ function loadConversations(): Conversation[] {
 
 function saveConversations(convos: Conversation[]) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(convos))
+  safeSetItem(STORAGE_KEY, JSON.stringify(cleanConversations(convos)))
 }
 
 // Writes streaming content directly to localStorage without going through React state.
@@ -66,7 +101,7 @@ function persistStreamingContent(convoId: string, content: string): void {
       if (last?.role === 'assistant') msgs[msgs.length - 1] = { ...last, content }
       return { ...c, messages: msgs, updatedAt: new Date().toISOString() }
     })
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
+    safeSetItem(STORAGE_KEY, JSON.stringify(updated))
   } catch {}
 }
 
@@ -258,12 +293,25 @@ export function ChatInterface() {
     }
 
     const title = convo.messages.length === 0 ? truncate(content, 40) : convo.title
+
+    // Only send the most recent hidden tool messages to avoid ballooning the context
+    // window in long conversations. Hidden messages arrive as assistant+tool pairs, so
+    // HIDDEN_KEEP must be even to never send an orphaned tool result.
+    const HIDDEN_THRESHOLD = 20
+    const HIDDEN_KEEP      = 10
+    const hiddenMsgs = convo.messages.filter(m => m.hidden)
+    const keepHiddenIds = hiddenMsgs.length > HIDDEN_THRESHOLD
+      ? new Set(hiddenMsgs.slice(-HIDDEN_KEEP).map(m => m.id))
+      : null
+
     const ollamaMessages = [
-      ...convo.messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
-      })),
+      ...convo.messages
+        .filter(m => !m.hidden || keepHiddenIds === null || keepHiddenIds.has(m.id))
+        .map(m => ({
+          role: m.role,
+          content: m.content,
+          ...(m.tool_calls && m.tool_calls.length > 0 ? { tool_calls: m.tool_calls } : {}),
+        })),
       { role: 'user', content },
     ]
 
@@ -380,7 +428,7 @@ export function ChatInterface() {
                     const placeholder = msgs.pop()
                     convos[idx].messages = [...msgs, ...toolMsgs, placeholder]
                     convos[idx].updatedAt = new Date().toISOString()
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(convos))
+                    safeSetItem(STORAGE_KEY, JSON.stringify(convos))
                   }
                 } catch {}
               }

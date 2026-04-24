@@ -36,7 +36,9 @@ CONNECTING NEW SERVICES: When the user wants to connect or use an external API o
 
 http_request step params: url (full URL or path relative to connection base), method (GET/POST/etc.), body (JSON string, optional), connection (name of registered connection), headers (extra headers, optional).
 
-You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Do NOT save which integrations or bots are connected — you can tell what's connected by which tools are available to you (e.g. if get_qq_messages is in your tool list, QQ is connected). Store user preferences and personal details, not system state.`
+You have a persistent memory system. Use the memory tool to save facts that will be useful in future sessions. Save proactively — do not wait to be asked. Do NOT save which integrations or bots are connected — you can tell what's connected by which tools are available to you (e.g. if get_qq_messages is in your tool list, QQ is connected). Store user preferences and personal details, not system state.
+
+After any turn where you used web_search, http_request, or other research tools to discover facts about an external service or API, immediately call the memory tool (action: 'add') to save a concise conclusion. Format: '<Service>: <finding>' (e.g. 'Tapo API: only Google Home integration available — no direct REST API'). One entry per distinct finding. Distill to the conclusion — do not save raw tool output. This persists research across sessions so it never needs to be re-fetched.`
 
 function parseQuestionsFromText(text: string): Array<{ question: string; options: string[] }> | null {
   // Split on lines that start a new numbered question
