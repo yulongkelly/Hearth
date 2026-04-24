@@ -1,3 +1,4 @@
+import { queryCapabilities, formatCapabilitySpec } from '@/lib/capability-layer'
 import { loadConnections } from '@/lib/custom-connection-store'
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
 import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
@@ -389,6 +390,21 @@ const DISCORD_TOOL_DEFINITIONS = [
   },
 ]
 
+const QUERY_CAPABILITIES_DEFINITION = {
+  type: 'function' as const,
+  function: {
+    name: 'query_capabilities',
+    description: 'Query the local capability graph for a known service or device. Call this BEFORE web_search when the user wants to connect an external service. Returns auth requirements, credential fields, and available actions if the service is known.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Service name, e.g. "Spotify", "GitHub", "weather API"' },
+      },
+      required: ['query'],
+    },
+  },
+}
+
 const WEB_SEARCH_DEFINITION = {
   type: 'function' as const,
   function: {
@@ -453,12 +469,12 @@ const REQUEST_CONNECTION_DEFINITION = {
   },
 }
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
+  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
   const messaging = getConnected().flatMap((a): object[] => {
@@ -491,6 +507,7 @@ export function toolStatusLabel(name: string): string {
     send_discord_message:  'Sending Discord message...',
     create_workflow:       'Creating workflow...',
     memory:                'Updating memory…',
+    query_capabilities:    'Looking up capability…',
     web_search:            'Searching the web…',
     request_connection:    'Setting up connection…',
     http_request:          'Calling API…',
@@ -852,6 +869,16 @@ async function execSendMessage(platform: PlatformName, targetKey: string, args: 
   return adapter.send(target, message)
 }
 
+// ─── Capability layer ─────────────────────────────────────────────────────────
+
+function execQueryCapabilities(args: Record<string, unknown>): string {
+  const query = String(args.query ?? '').trim()
+  if (!query) return 'Error: query is required'
+  const spec = queryCapabilities(query)
+  if (!spec) return `No capability found for "${query}". Use web_search to look up API documentation.`
+  return formatCapabilitySpec(spec)
+}
+
 // ─── Web search ───────────────────────────────────────────────────────────────
 
 async function execWebSearch(args: Record<string, unknown>): Promise<string> {
@@ -934,6 +961,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'send_telegram_message': return await execSendMessage('telegram', 'target', args)
       case 'get_discord_messages':  return execGetMessages('discord', args)
       case 'send_discord_message':  return await execSendMessage('discord', 'channel', args)
+      case 'query_capabilities':    return execQueryCapabilities(args)
       case 'web_search':            return await execWebSearch(args)
       case 'http_request':          return await execHttpRequest(args)
       default:                      return `Error: unknown tool "${name}"`

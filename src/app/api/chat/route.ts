@@ -52,7 +52,7 @@ function loadHearthMd(): string {
 
 ensureHearthMd()
 
-const EVENT_SKIP = new Set(['memory', 'ask_clarification', 'create_workflow', 'query_events', 'web_search', 'request_connection'])
+const EVENT_SKIP = new Set(['memory', 'ask_clarification', 'create_workflow', 'query_events', 'web_search', 'request_connection', 'query_capabilities'])
 
 const NDJSON_HEADERS = {
   'Content-Type': 'application/x-ndjson',
@@ -69,7 +69,7 @@ You can create reusable workflow tools using create_workflow. Before calling cre
 
 CONNECTING NEW SERVICES: When the user wants to connect or use an external API or service you don't have built-in access to (e.g. smart home devices, custom APIs):
 1. Call ask_clarification to confirm they want to set up the connection (1 question, yes/no).
-2. Call web_search to find the API documentation and required credentials.
+2. Call query_capabilities with the service name first. If it returns a capability spec, use those credential fields directly in request_connection — skip web_search entirely. Only call web_search if query_capabilities returns nothing.
 3a. If you find enough info: call request_connection with full setup details, exact credential fields (use type "password" for secrets), and a test_url if the API has a simple endpoint to verify (like /user/info or /status).
 3b. If you cannot find API access info or it requires complex OAuth: tell the user you cannot connect to that service and suggest alternatives.
 4. After connection is verified: confirm the specific action with the user, then call create_workflow using http_request steps with connection: "<service name>".
