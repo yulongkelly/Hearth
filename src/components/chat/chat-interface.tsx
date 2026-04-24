@@ -76,7 +76,13 @@ function loadConversations(): Conversation[] {
       updatedAt: new Date(c.updatedAt),
       messages: c.messages.map((m: Message) => ({ ...m, createdAt: new Date(m.createdAt) })),
     }))
-    return cleanConversations(reconstructed)
+    const cleaned = cleanConversations(reconstructed)
+    // Persist cleanup immediately so localStorage reflects the canonical state.
+    // Avoids a subsequent saveConversations being required to flush the cap/strip.
+    if (cleaned.length !== parsed.length || cleaned.some((c: Conversation, i: number) => c.messages.length !== parsed[i]?.messages?.length)) {
+      safeSetItem(STORAGE_KEY, JSON.stringify(cleaned))
+    }
+    return cleaned
   } catch {
     return []
   }
