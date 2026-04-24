@@ -60,7 +60,8 @@ export class SlackAdapter implements BasePlatformAdapter {
     const g: SlackSingleton = { app: null, status: 'connecting', botName: null, teamName: null, error: null }
     this._g = g
 
-    const silentLogger = { debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, setLevel: ()=>{}, setName: ()=>{} }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const silentLogger: any = { debug: ()=>{}, info: ()=>{}, warn: ()=>{}, error: ()=>{}, setLevel: ()=>{}, setName: ()=>{}, getLevel: ()=>'error' }
 
     try {
       const app = new App({ token, socketMode: true, appToken: appTok, logger: silentLogger })
