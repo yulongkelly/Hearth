@@ -127,6 +127,11 @@ export function ChatInterface() {
   const [pendingConnection, setPendingConnection] = useState<ChatStore.PendingConnection | null>(null)
   const [pendingTool, setPendingTool] = useState<UserTool | null>(null)
   const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowTool | null>(null)
+  const [contextLength, setContextLength] = useState<number>(4096)
+  const [compactCountdown, setCompactCountdown] = useState<number | null>(null)
+  const [isCompacting, setIsCompacting] = useState(false)
+  const [incomingBanner, setIncomingBanner] = useState<string | null>(null)
+  const lastNotifyRef = useRef<string>(new Date().toISOString())
 
   async function handleAnswers(id: string, answers: string[]) {
     setPendingQuestions(null)
@@ -150,8 +155,18 @@ export function ChatInterface() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const prevActiveId = useRef<string | null>(null)
 
   const activeConversation = conversations.find(c => c.id === activeId) ?? null
+
+  // Close questionnaire when user switches conversations
+  useEffect(() => {
+    if (prevActiveId.current !== null && prevActiveId.current !== activeId) {
+      setPendingQuestions(null)
+      ChatStore.setPendingQuestions(null)
+    }
+    prevActiveId.current = activeId
+  }, [activeId])
 
   useEffect(() => {
     const saved = loadConversations()
@@ -229,6 +244,14 @@ export function ChatInterface() {
   }, [])
 
   useEffect(() => {
+    if (!selectedModel) return
+    fetch(`/api/context-length?model=${encodeURIComponent(selectedModel)}`)
+      .then(r => r.json())
+      .then(d => { if (typeof d.contextLength === 'number') setContextLength(d.contextLength) })
+      .catch(() => {})
+  }, [selectedModel])
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [activeConversation?.messages])
 
@@ -269,6 +292,143 @@ export function ChatInterface() {
       return prev
     })
   }, [conversations])
+
+  // ─── Context usage ────────────────────────────────────────────────────────
+  const AVG_CHARS_PER_TOKEN = 4
+  const SYSTEM_OVERHEAD_CHARS = 3000
+  const totalMsgChars = (activeConversation?.messages ?? [])
+    .reduce((acc, m) => acc + (m.content?.length ?? 0), 0)
+  const contextUsagePct = (totalMsgChars + SYSTEM_OVERHEAD_CHARS) / (contextLength * AVG_CHARS_PER_TOKEN)
+
+  // ─── Auto-compact trigger ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (contextUsagePct >= 1.0 && !isStreaming && !isCompacting && compactCountdown === null && activeConversation) {
+      setCompactCountdown(3)
+    }
+  }, [contextUsagePct, isStreaming, isCompacting, compactCountdown, activeConversation])
+
+  useEffect(() => {
+    if (compactCountdown === null || compactCountdown <= 0) return
+    const t = setTimeout(() => setCompactCountdown(c => (c ?? 1) - 1), 1000)
+    return () => clearTimeout(t)
+  }, [compactCountdown])
+
+  const triggerCompact = useCallback(async () => {
+    if (!activeConversation || !selectedModel) return
+    setCompactCountdown(null)
+    setIsCompacting(true)
+
+    const KEEP_TURNS = 6
+    const visibleMsgs = activeConversation.messages.filter(m => !m.hidden)
+    const toSummarise = visibleMsgs.slice(0, Math.max(0, visibleMsgs.length - KEEP_TURNS * 2))
+    const toKeep = visibleMsgs.slice(-KEEP_TURNS * 2)
+
+    try {
+      const res = await fetch('/api/chat/compact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: toSummarise.map(m => ({ role: m.role, content: m.content })),
+          memoryThreshold: loadMemoryThreshold(),
+        }),
+      })
+      if (!res.ok) return
+
+      const { summary, memorySnapshot } = await res.json() as {
+        summary: string
+        facts: string[]
+        memorySnapshot: string
+      }
+
+      const now = new Date()
+      const memorySnapshotMsg: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: `**[Memory context at compact]**\n\n${memorySnapshot}`,
+        createdAt: now,
+        hidden: false,
+      }
+      const summaryMsg: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: `**[Conversation compacted]**\n\n${summary}`,
+        createdAt: now,
+        hidden: false,
+      }
+
+      const cutoffTime = toKeep[0]?.createdAt ? new Date(toKeep[0].createdAt).getTime() : now.getTime()
+      const keptHidden = activeConversation.messages.filter(
+        m => m.hidden && new Date(m.createdAt).getTime() >= cutoffTime
+      )
+
+      const newMessages = [memorySnapshotMsg, summaryMsg, ...keptHidden, ...toKeep]
+
+      setConversations(prev => {
+        const updated = prev.map(c =>
+          c.id === activeConversation.id
+            ? { ...c, messages: newMessages, updatedAt: new Date() }
+            : c
+        )
+        saveConversations(updated)
+        return updated
+      })
+    } finally {
+      setIsCompacting(false)
+    }
+  }, [activeConversation, selectedModel])
+
+  useEffect(() => {
+    if (compactCountdown === 0) triggerCompact()
+  }, [compactCountdown, triggerCompact])
+
+  // ─── Incoming-message poller ──────────────────────────────────────────────
+  useEffect(() => {
+    const POLL_MS = 30_000
+
+    async function poll() {
+      const since = lastNotifyRef.current
+      try {
+        const res = await fetch(`/api/messaging/notify?since=${encodeURIComponent(since)}`)
+        if (!res.ok) return
+        const { messages } = await res.json() as { messages: Array<{ platform: string; from: string; room: string | null; text: string; timestamp: string }> }
+        lastNotifyRef.current = new Date().toISOString()
+        if (!messages.length) return
+
+        // Summarise for the banner
+        const preview = messages
+          .slice(0, 3)
+          .map(m => `${m.platform} • ${m.from}: ${m.text.slice(0, 60)}${m.text.length > 60 ? '…' : ''}`)
+          .join(' / ')
+        setIncomingBanner(`${messages.length} new message${messages.length > 1 ? 's' : ''} — ${preview}`)
+        setTimeout(() => setIncomingBanner(null), 10_000)
+
+        // Inject as hidden system context so the LLM sees it on the next turn
+        const contextBlock = messages.map(m =>
+          `[${m.platform}] from: ${m.from}${m.room ? ` (${m.room})` : ''}\n${m.text}`
+        ).join('\n---\n')
+        const systemMsg: Message = {
+          id: generateId(),
+          role: 'system',
+          content: `New incoming messages received while you were idle:\n\n${contextBlock}`,
+          createdAt: new Date(),
+          hidden: true,
+        }
+        setConversations(prev => {
+          const target = prev.find(c => c.id === activeId) ?? prev[0]
+          if (!target) return prev
+          const updated = prev.map(c =>
+            c.id === target.id ? { ...c, messages: [...c.messages, systemMsg], updatedAt: new Date() } : c
+          )
+          saveConversations(updated)
+          return updated
+        })
+      } catch { /* non-critical */ }
+    }
+
+    const interval = setInterval(poll, POLL_MS)
+    return () => clearInterval(interval)
+  }, [activeId])
 
   const sendMessage = useCallback(async () => {
     const content = input.trim()
@@ -626,6 +786,15 @@ export function ChatInterface() {
           </div>
         )}
 
+        {/* Incoming message banner */}
+        {incomingBanner && (
+          <div className="flex items-center gap-2 border-b border-primary/20 bg-primary/10 px-4 py-2.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0 animate-pulse" />
+            <p className="text-xs text-primary truncate flex-1">{incomingBanner}</p>
+            <button onClick={() => setIncomingBanner(null)} className="text-xs text-muted-foreground hover:text-foreground flex-shrink-0">✕</button>
+          </div>
+        )}
+
         {/* Messages */}
         <ScrollArea className="flex-1">
           <div className="flex flex-col py-4">
@@ -721,6 +890,42 @@ export function ChatInterface() {
             }}
             onCancel={() => { setPendingWorkflow(null); ChatStore.setPendingWorkflow(null) }}
           />
+        )}
+
+        {/* Compact banner */}
+        {compactCountdown !== null && !isCompacting && (
+          <div className="mx-4 mb-1 flex items-center justify-between rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-600 dark:text-yellow-400">
+            <span>⚠ Context window full — compacting in {compactCountdown}s…</span>
+            <div className="flex gap-2">
+              <button onClick={() => setCompactCountdown(null)} className="underline">Cancel</button>
+              <button onClick={triggerCompact} className="font-medium underline">Compact now</button>
+            </div>
+          </div>
+        )}
+        {isCompacting && (
+          <div className="mx-4 mb-1 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Compacting conversation…</span>
+          </div>
+        )}
+
+        {/* Context usage bar */}
+        {activeConversation && (
+          <div data-testid="context-bar" className="px-4 pt-2 pb-1 flex items-center gap-2">
+            <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-all duration-500',
+                  contextUsagePct >= 0.9 ? 'bg-destructive' :
+                  contextUsagePct >= 0.7 ? 'bg-yellow-500' : 'bg-primary'
+                )}
+                style={{ width: `${Math.min(contextUsagePct * 100, 100).toFixed(1)}%` }}
+              />
+            </div>
+            <span data-testid="context-pct" className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">
+              {Math.min(Math.round(contextUsagePct * 100), 100)}%
+            </span>
+          </div>
         )}
 
         {/* Input area */}
