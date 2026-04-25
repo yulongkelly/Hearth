@@ -110,8 +110,9 @@ export async function executePlan(
     try {
       const interceptKey = `${task.tool}.${task.action}`
       const interceptor = ctx.interceptors?.[interceptKey]
+      const resolvedTask = { ...task, args: finalArgs }
       const raw = interceptor
-        ? await interceptor(task)
+        ? await interceptor(resolvedTask)
         : await executeTool(registration.toolName, finalArgs)
       const result = String(raw)
       const trimmed = result.slice(0, 2000)
