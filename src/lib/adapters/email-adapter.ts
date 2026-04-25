@@ -1,13 +1,13 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { encryptLine, decryptLine, writeEncrypted, readEncrypted } from '../secure-storage'
+import { decryptLine, writeEncrypted, readEncrypted } from '../secure-storage'
 import type { BasePlatformAdapter, ConnectOptions, PlatformMessage, PlatformName, PlatformState, QueryOptions } from '../platform-adapter'
+import { createAppender } from './adapter-utils'
 
 const HEARTH_DIR    = path.join(os.homedir(), '.hearth')
 const CONFIG_FILE   = path.join(HEARTH_DIR, 'email-config.json')
 const MESSAGES_FILE = path.join(HEARTH_DIR, 'email-messages.jsonl')
-const MAX_LINES     = 2000
 
 interface EmailConfig { email: string; password: string }
 interface RawMsg { from: string; subject: string; text: string; timestamp: string }
@@ -43,6 +43,7 @@ function detectProvider(email: string) {
 export class EmailAdapter implements BasePlatformAdapter {
   readonly name: PlatformName = 'email'
   private _g: EmailSingleton | undefined = undefined
+  private readonly _append = createAppender(HEARTH_DIR, MESSAGES_FILE)
 
   getState(): PlatformState {
     const g = this._g
@@ -160,19 +161,4 @@ export class EmailAdapter implements BasePlatformAdapter {
     } catch { /* non-critical */ }
   }
 
-  private _append(msg: RawMsg): void {
-    try {
-      if (!fs.existsSync(HEARTH_DIR)) fs.mkdirSync(HEARTH_DIR, { recursive: true, mode: 0o700 })
-      fs.appendFileSync(MESSAGES_FILE, encryptLine(msg) + '\n', { mode: 0o600, encoding: 'utf8' })
-      this._trim()
-    } catch { /* non-critical */ }
-  }
-
-  private _trim(): void {
-    try {
-      const lines = fs.readFileSync(MESSAGES_FILE, 'utf8').split('\n').filter(Boolean)
-      if (lines.length > MAX_LINES)
-        fs.writeFileSync(MESSAGES_FILE, lines.slice(-MAX_LINES).join('\n') + '\n', { mode: 0o600 })
-    } catch {}
-  }
 }
