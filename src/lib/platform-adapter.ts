@@ -1,4 +1,4 @@
-export const PLATFORMS = ['wechat', 'qq', 'telegram', 'discord', 'slack', 'whatsapp', 'matrix', 'email', 'mattermost'] as const
+export const PLATFORMS = ['email'] as const
 export type PlatformName = typeof PLATFORMS[number]
 
 export type ConnectStatus = 'stopped' | 'scanning' | 'connecting' | 'connected' | 'error'
@@ -12,12 +12,19 @@ export interface PlatformState {
   error:    string | null
 }
 
+export interface AttachmentInfo {
+  type:      'image' | 'voice' | 'video' | 'file' | 'sticker' | 'unknown'
+  name?:     string
+  duration?: number  // seconds, for voice/video
+}
+
 export interface PlatformMessage {
-  platform:  PlatformName
-  from:      string        // sender display name
-  room:      string | null // group / channel name; null for DMs
-  text:      string
-  timestamp: string        // ISO-8601
+  platform:     PlatformName
+  from:         string        // sender display name
+  room:         string | null // group / channel name; null for DMs
+  text:         string
+  timestamp:    string        // ISO-8601
+  attachments?: AttachmentInfo[]
 }
 
 export interface QueryOptions {

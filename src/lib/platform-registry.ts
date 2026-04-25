@@ -11,33 +11,8 @@ function registry(): Map<PlatformName, BasePlatformAdapter> {
 
 async function ensureRegistered(): Promise<void> {
   if (registry().size > 0) return
-  // Lazily instantiate all adapters if instrumentation hasn't run yet
-  // (happens in Next.js dev mode when route handlers load before the instrumentation hook)
-  const [
-    { WechatAdapter },
-    { QqAdapter },
-    { TelegramAdapter },
-    { DiscordAdapter },
-    { SlackAdapter },
-    { WhatsAppAdapter },
-    { MatrixAdapter },
-    { EmailAdapter },
-    { MattermostAdapter },
-  ] = await Promise.all([
-    import('./adapters/wechat-adapter'),
-    import('./adapters/qq-adapter'),
-    import('./adapters/telegram-adapter'),
-    import('./adapters/discord-adapter'),
-    import('./adapters/slack-adapter'),
-    import('./adapters/whatsapp-adapter'),
-    import('./adapters/matrix-adapter'),
-    import('./adapters/email-adapter'),
-    import('./adapters/mattermost-adapter'),
-  ])
-  ;[
-    new WechatAdapter(), new QqAdapter(), new TelegramAdapter(), new DiscordAdapter(),
-    new SlackAdapter(), new WhatsAppAdapter(), new MatrixAdapter(), new EmailAdapter(), new MattermostAdapter(),
-  ].forEach(a => registry().set(a.name, a))
+  const { EmailAdapter } = await import('./adapters/email-adapter')
+  registry().set('email', new EmailAdapter())
 }
 
 export function register(adapter: BasePlatformAdapter): void {

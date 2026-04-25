@@ -1,7 +1,7 @@
 import { queryCapabilities, formatCapabilitySpec } from '@/lib/capability-layer'
 import { loadConnections } from '@/lib/custom-connection-store'
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
-import { isConfigured as plaidConfigured, listItems, loadCredentials as loadPlaidCredentials, plaidBaseUrl } from '@/lib/plaid-auth'
+
 import { listEvents, searchEvents } from '@/lib/event-store'
 import type { HearthEvent } from '@/lib/event-store'
 import { get as getAdapter, getConnected } from '@/lib/platform-registry'
@@ -229,167 +229,6 @@ const QUERY_EVENTS_DEFINITION = {
   },
 }
 
-const PLAID_TOOL_DEFINITIONS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'get_transactions',
-      description: 'Get bank transaction history from any linked account. Use days=1 for "today", days=7 for "this week", etc. Supports filtering by institution name (e.g. "TD Bank", "Chase"). Returns date, amount, merchant, and category for each transaction.',
-      parameters: {
-        type: 'object',
-        properties: {
-          days: {
-            type: 'number',
-            description: 'How many days back to look. Use 1 for today, 7 for this week, 30 for this month. Default 30, max 90.',
-          },
-          institution: {
-            type: 'string',
-            description: 'Bank name to filter by, e.g. "TD Bank". Omit to include all linked accounts.',
-          },
-        },
-        required: [],
-      },
-    },
-  },
-]
-
-const WECHAT_TOOL_DEFINITIONS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'get_wechat_messages',
-      description: 'Read recent WeChat messages received while Hearth was running. Filter by contact name and/or number of days.',
-      parameters: {
-        type: 'object',
-        properties: {
-          contact: { type: 'string', description: 'Contact display name to filter by. Omit to get all recent messages.' },
-          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
-          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'send_wechat_message',
-      description: 'Send a WeChat message to a contact by their display name.',
-      parameters: {
-        type: 'object',
-        properties: {
-          contact: { type: 'string', description: "The contact's WeChat display name." },
-          message: { type: 'string', description: 'The message text to send.' },
-        },
-        required: ['contact', 'message'],
-      },
-    },
-  },
-]
-
-const QQ_TOOL_DEFINITIONS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'get_qq_messages',
-      description: 'Read recent QQ messages received while Hearth was running. Filter by contact name or QQ number.',
-      parameters: {
-        type: 'object',
-        properties: {
-          contact: { type: 'string', description: 'Contact nickname or QQ number to filter by. Omit for all recent messages.' },
-          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
-          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'send_qq_message',
-      description: 'Send a QQ message to a user or group via the Official QQ Bot API using their openid. Requires a recent incoming message from the target for passive replies.',
-      parameters: {
-        type: 'object',
-        properties: {
-          target:  { type: 'string', description: "The recipient's openid (user_openid for DMs, group_openid for groups) — obtained from a received message." },
-          message: { type: 'string', description: 'The message text to send.' },
-        },
-        required: ['target', 'message'],
-      },
-    },
-  },
-]
-
-const TELEGRAM_TOOL_DEFINITIONS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'get_telegram_messages',
-      description: 'Read recent Telegram messages received by the bot while Hearth was running.',
-      parameters: {
-        type: 'object',
-        properties: {
-          contact: { type: 'string', description: 'Username or name to filter by. Omit for all recent messages.' },
-          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
-          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'send_telegram_message',
-      description: 'Send a Telegram message to a chat ID or @username.',
-      parameters: {
-        type: 'object',
-        properties: {
-          target:  { type: 'string', description: 'Chat ID (numeric) or @username of the recipient.' },
-          message: { type: 'string', description: 'The message text to send.' },
-        },
-        required: ['target', 'message'],
-      },
-    },
-  },
-]
-
-const DISCORD_TOOL_DEFINITIONS = [
-  {
-    type: 'function' as const,
-    function: {
-      name: 'get_discord_messages',
-      description: 'Read recent Discord messages received by the bot while Hearth was running. Filter by user or channel.',
-      parameters: {
-        type: 'object',
-        properties: {
-          contact: { type: 'string', description: 'Username to filter by. Omit for all recent messages.' },
-          channel: { type: 'string', description: 'Channel name to filter by.' },
-          days:    { type: 'number', description: 'How many days back to look. Default 7.' },
-          limit:   { type: 'number', description: 'Max messages to return. Default 50.' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'send_discord_message',
-      description: 'Send a message to a Discord channel by channel ID or name.',
-      parameters: {
-        type: 'object',
-        properties: {
-          channel: { type: 'string', description: 'Channel ID or exact channel name.' },
-          message: { type: 'string', description: 'The message text to send.' },
-        },
-        required: ['channel', 'message'],
-      },
-    },
-  },
-]
-
 const QUERY_CAPABILITIES_DEFINITION = {
   type: 'function' as const,
   function: {
@@ -469,22 +308,14 @@ const REQUEST_CONNECTION_DEFINITION = {
   },
 }
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, ...PLAID_TOOL_DEFINITIONS, ...WECHAT_TOOL_DEFINITIONS, ...QQ_TOOL_DEFINITIONS, ...TELEGRAM_TOOL_DEFINITIONS, ...DISCORD_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
   const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
-  const plaid   = (plaidConfigured() && listItems().length > 0) ? PLAID_TOOL_DEFINITIONS : []
-  const messaging = getConnected().flatMap((a): object[] => {
-    if (a.name === 'wechat')   return WECHAT_TOOL_DEFINITIONS
-    if (a.name === 'qq')       return QQ_TOOL_DEFINITIONS
-    if (a.name === 'telegram') return TELEGRAM_TOOL_DEFINITIONS
-    if (a.name === 'discord')  return DISCORD_TOOL_DEFINITIONS
-    return []
-  })
-  return [...always, ...google, ...plaid, ...messaging]
+  return [...always, ...google]
 }
 
 // ─── Status labels ────────────────────────────────────────────────────────────
@@ -495,16 +326,7 @@ export function toolStatusLabel(name: string): string {
     read_email:          'Reading email...',
     send_email:          'Sending email...',
     get_calendar_events: 'Checking Calendar...',
-    get_transactions:      'Fetching transactions...',
     query_events:          'Searching activity history...',
-    get_wechat_messages:   'Reading WeChat messages...',
-    send_wechat_message:   'Sending WeChat message...',
-    get_qq_messages:       'Reading QQ messages...',
-    send_qq_message:       'Sending QQ message...',
-    get_telegram_messages: 'Reading Telegram messages...',
-    send_telegram_message: 'Sending Telegram message...',
-    get_discord_messages:  'Reading Discord messages...',
-    send_discord_message:  'Sending Discord message...',
     create_workflow:       'Creating workflow...',
     memory:                'Updating memory…',
     query_capabilities:    'Looking up capability…',
@@ -771,77 +593,7 @@ function execQueryEvents(args: Record<string, unknown>): string {
   return events.map(formatEvent).join('\n\n---\n\n')
 }
 
-async function execGetTransactions(args: Record<string, unknown>): Promise<string> {
-  const creds = loadPlaidCredentials()
-  if (!creds) return 'Error: Plaid not configured. Ask the user to set up Plaid on the integrations page.'
-
-  const days        = Math.min(Number(args.days) || 30, 90)
-  const institution = args.institution ? String(args.institution).toLowerCase() : null
-  let items         = listItems()
-  if (!items.length) return 'Error: no bank accounts linked. Ask the user to connect an account on the integrations page.'
-  if (institution) {
-    items = items.filter(i => i.institutionName.toLowerCase().includes(institution))
-    if (!items.length) return `Error: no linked institution matching "${args.institution}".`
-  }
-
-  const endDate   = new Date().toISOString().split('T')[0]
-  const startDate = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().split('T')[0]
-  const base      = plaidBaseUrl(creds.env)
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const allTransactions: any[] = []
-
-  await Promise.all(items.map(async item => {
-    const res = await fetch(`${base}/transactions/get`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id:    creds.clientId,
-        secret:       creds.secret,
-        access_token: item.accessToken,
-        start_date:   startDate,
-        end_date:     endDate,
-        options:      { count: 100 },
-      }),
-    })
-    if (!res.ok) return
-    const data = await res.json()
-    const accountMap = Object.fromEntries(item.accounts.map(a => [a.id, a]))
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const tx of (data.transactions ?? []) as any[]) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const acct = accountMap[tx.account_id] as any
-      allTransactions.push({
-        institution:  item.institutionName,
-        account:      acct ? `${acct.name} ****${acct.mask}` : tx.account_id,
-        date:         tx.date,
-        amount:       -tx.amount,
-        name:         tx.name,
-        merchantName: tx.merchant_name ?? null,
-        category:     tx.category?.[0] ?? null,
-        pending:      tx.pending,
-      })
-    }
-  }))
-
-  if (!allTransactions.length) return 'No transactions found for the specified period.'
-
-  allTransactions.sort((a, b) => b.date.localeCompare(a.date))
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return allTransactions.map((t: any) => [
-    `Institution: ${t.institution}`,
-    `Account: ${t.account}`,
-    `Date: ${t.date}`,
-    `Amount: ${t.amount >= 0 ? '+' : ''}${Number(t.amount).toFixed(2)}`,
-    `Name: ${t.name}`,
-    t.merchantName ? `Merchant: ${t.merchantName}` : null,
-    t.category     ? `Category: ${t.category}`     : null,
-    `Pending: ${t.pending}`,
-  ].filter(Boolean).join('\n')).join('\n\n---\n\n')
-}
-
-// ─── Messaging executors (shared) ─────────────────────────────────────────────
+// ─── Messaging executors ──────────────────────────────────────────────────────
 
 function execGetMessages(platform: PlatformName, args: Record<string, unknown>): string {
   const adapter = getAdapter(platform)
@@ -951,16 +703,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'read_email':            return await execReadEmail(args)
       case 'send_email':            return await execSendEmail(args)
       case 'get_calendar_events':   return await execGetCalendarEvents(args)
-      case 'get_transactions':      return await execGetTransactions(args)
       case 'query_events':          return execQueryEvents(args)
-      case 'get_wechat_messages':   return execGetMessages('wechat', args)
-      case 'send_wechat_message':   return await execSendMessage('wechat', 'contact', args)
-      case 'get_qq_messages':       return execGetMessages('qq', args)
-      case 'send_qq_message':       return await execSendMessage('qq', 'target', args)
-      case 'get_telegram_messages': return execGetMessages('telegram', args)
-      case 'send_telegram_message': return await execSendMessage('telegram', 'target', args)
-      case 'get_discord_messages':  return execGetMessages('discord', args)
-      case 'send_discord_message':  return await execSendMessage('discord', 'channel', args)
       case 'query_capabilities':    return execQueryCapabilities(args)
       case 'web_search':            return await execWebSearch(args)
       case 'http_request':          return await execHttpRequest(args)
