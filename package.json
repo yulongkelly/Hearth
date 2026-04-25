@@ -1,6 +1,6 @@
 {
   "name": "hearth",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Hearth — your private AI assistant, powered by your home",
   "private": true,
   "main": "electron/main.js",
