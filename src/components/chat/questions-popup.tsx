@@ -121,13 +121,13 @@ export function QuestionsPopup({ questions, onSubmit }: QuestionsPopupProps) {
   }
 
   return (
-    <div className="border-t border-border bg-card">
-      <div className="px-4 pt-3 pb-1">
+    <div className="border-t border-border bg-card flex flex-col max-h-[50vh]">
+      <div className="px-4 pt-3 pb-1 flex-shrink-0">
         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           The AI has a few questions
         </p>
       </div>
-      <div className="px-4 pb-2 space-y-4">
+      <div className="px-4 pb-2 space-y-4 overflow-y-auto flex-1">
         {questions.map((q, i) => (
           <QuestionRow
             key={i}
@@ -141,7 +141,7 @@ export function QuestionsPopup({ questions, onSubmit }: QuestionsPopupProps) {
           />
         ))}
       </div>
-      <div className="flex justify-end px-4 pb-3">
+      <div className="flex justify-end px-4 py-3 flex-shrink-0 border-t border-border">
         <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
           Submit answers
         </Button>
