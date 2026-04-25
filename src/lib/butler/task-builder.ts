@@ -6,32 +6,21 @@ export interface Task {
   args:         Record<string, unknown>
   intent:       TaskIntent
   privacyLevel: PrivacyLevel
-  // false = must stay on-device; true = may route to cloud model (no real data attached)
   canUseCloud:  boolean
 }
 
-// High-privacy tools: contain real user data that must never leave the device
 const HIGH_PRIVACY = new Set([
   'get_inbox', 'read_email', 'send_email',
-  'get_transactions',
-  'get_wechat_messages',  'send_wechat_message',
-  'get_qq_messages',      'send_qq_message',
-  'get_telegram_messages','send_telegram_message',
-  'get_discord_messages', 'send_discord_message',
+  'get_email_inbox', 'send_email_imap',
 ])
 
-// Medium-privacy tools: non-sensitive personal data (calendar titles, schedules)
 const MEDIUM_PRIVACY = new Set([
-  'get_calendar_events',
+  'get_calendar_events', 'create_event',
 ])
 
-// Send-intent tools: any tool that pushes data to an external service
 const SEND_TOOLS = new Set([
   'send_email',
-  'send_wechat_message',
-  'send_qq_message',
-  'send_telegram_message',
-  'send_discord_message',
+  'send_email_imap',
 ])
 
 export function buildTask(toolName: string, args: Record<string, unknown>): Task {

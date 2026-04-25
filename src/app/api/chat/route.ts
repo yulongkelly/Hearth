@@ -4,13 +4,12 @@ import path from 'path'
 import os from 'os'
 import { getModelAdapter } from '@/lib/adapters/registry'
 import type { ChatMessage } from '@/lib/model-adapter'
-import { getAvailableTools, toolStatusLabel } from '@/lib/tools'
-import { buildTask } from '@/lib/butler/task-builder'
-import { executeTask } from '@/lib/butler/executor'
-import { waitForAnswers } from '@/lib/questions-store'
-import { waitForConnection } from '@/lib/connection-answer-store'
-import { readMemory, readMemoryTrimmed, readMemoryEntries, queueMemoryWrite, flushMemoryQueue, replaceEntry, removeEntry } from '@/lib/memory-store'
+import { planFromMessage } from '@/lib/butler/planner'
+import { validatePlan } from '@/lib/butler/plan-validator'
+import { executePlan } from '@/lib/butler/plan-executor'
+import { readMemory, readMemoryTrimmed, readMemoryEntries, queueMemoryWrite, flushMemoryQueue } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
+import { waitForApproval } from '@/lib/approval-store'
 import { validateMemoryEntry } from '@/lib/memory-validator'
 import { retrieveRelevantMemory } from '@/lib/memory-retrieval'
 import { compile, compileRetryPrompt } from '@/lib/workflow-compiler'
@@ -116,8 +115,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'model and messages are required' }), { status: 400 })
   }
 
-  const adapter        = getModelAdapter()
-  const availableTools = getAvailableTools()
+  const adapter = getModelAdapter()
 
   const contextLength = (await adapter.getContextLength?.(model)) ?? 4096
 
@@ -173,179 +171,96 @@ export async function POST(req: NextRequest) {
     try {
       const hasSystem = messages.some((m: ChatMessage) => m.role === 'system')
       const systemMsg: ChatMessage = { role: 'system', content: fullSystemMessage }
-      let loopMessages: ChatMessage[] = hasSystem ? [...messages] : [systemMsg, ...messages]
-      let clarificationDone = false
+      const baseMessages: ChatMessage[] = hasSystem ? [...messages] : [systemMsg, ...messages]
 
-      function emitToolHistory() {
-        const toolMessages = loopMessages
-          .filter(m => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0))
-          .map(m => ({
-            role: m.role,
-            content: m.content.length > 2000 ? m.content.slice(0, 2000) + '\n[trimmed]' : m.content,
-            ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-          }))
-        if (toolMessages.length > 0) writeLine({ tool_history: toolMessages })
-      }
+      // ── Phase 1: Planning ────────────────────────────────────────────────────
+      const plan = await planFromMessage(baseMessages, '', adapter, model)
 
-      for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-        let result
-        try {
-          result = await adapter.chat({
-            model,
-            messages: loopMessages,
-            tools: availableTools,
-            signal: AbortSignal.timeout(60_000),
-          })
-        } catch {
-          await streamFinal(messages)
-          return
-        }
-
-        const assistantMsg: ChatMessage = {
-          role:       'assistant',
-          content:    result.content,
-          tool_calls: result.tool_calls,
-        }
-
-        if (!result.tool_calls || result.tool_calls.length === 0) {
-          // If the model wrote clarification questions as text instead of calling ask_clarification,
-          // intercept them, show the popup, then continue the loop with the answers.
-          if (!clarificationDone && result.content) {
-            const parsed = parseQuestionsFromText(result.content)
-            if (parsed) {
-              clarificationDone = true
-              const id = crypto.randomUUID()
-              writeLine({ pending_questions: { id, questions: parsed } })
-              const answers = await waitForAnswers(id)
-              const answersText = parsed.map((q, j) => `Q: ${q.question}\nA: ${answers[j] ?? '(no answer)'}`).join('\n\n')
-              loopMessages.push({ role: 'assistant', content: result.content })
-              loopMessages.push({ role: 'user', content: `Here are my answers:\n\n${answersText}\n\nNow call create_workflow immediately.` })
-              continue
-            }
-          }
-          emitToolHistory()
-          writeLine({ message: { role: 'assistant', content: assistantMsg.content }, done: false })
+      // Pure conversation — no tool tasks needed; stream planner's response directly
+      if (plan.tasks.length === 0) {
+        if (plan.response) {
+          writeLine({ message: { role: 'assistant', content: plan.response }, done: false })
           writeLine({ message: { role: 'assistant', content: '' }, done: true })
-          return
+        } else {
+          // Planner failed entirely — fall back to direct stream
+          await streamFinal(baseMessages)
         }
-
-        loopMessages.push(assistantMsg)
-
-        const results = await Promise.all(
-          result.tool_calls.map(async tc => {
-            const args = parseArgs(tc.function.arguments)
-
-            // ── memory: read/write persistent memory files ────────────────────
-            if (tc.function.name === 'memory') {
-              writeLine({ tool_status: toolStatusLabel('memory') })
-              const { action, target, content = '', old_content = '' } = args as Record<string, string>
-              const t = (target === 'memory' || target === 'user') ? target as MemoryTarget : 'memory'
-              switch (action) {
-                case 'read': return readMemory(t)
-                case 'add': {
-                  const v = validateMemoryEntry(content)
-                  if (!v.valid) return `Rejected: ${v.reason}. Rewrite as a concise stable fact.`
-                  queueMemoryWrite(t, 'add', content, ollamaUrl, model)
-                  return 'Queued.'
-                }
-                case 'replace': {
-                  queueMemoryWrite(t, 'replace', content, ollamaUrl, model, old_content)
-                  return 'Queued.'
-                }
-                case 'remove': {
-                  queueMemoryWrite(t, 'remove', old_content, ollamaUrl, model)
-                  return 'Queued.'
-                }
-                default: return 'Error: unknown memory action'
-              }
-            }
-
-            // ── ask_clarification: show question popup, wait for answers ─────
-            if (tc.function.name === 'ask_clarification') {
-              if (clarificationDone) return 'Clarification already collected. Proceed with create_workflow now.'
-              clarificationDone = true
-              const rawQ = args.questions
-              const questions: Array<{ question: string; options: string[] }> = Array.isArray(rawQ) ? rawQ.filter((q: unknown) => q && typeof (q as { question?: unknown }).question === 'string' && Array.isArray((q as { options?: unknown }).options) && (q as { options: unknown[] }).options.length > 0) : []
-              if (questions.length === 0) {
-                clarificationDone = false
-                return 'Error: ask_clarification called with no valid questions. Call it again with at least one question and 2–4 options.'
-              }
-              const id = crypto.randomUUID()
-              writeLine({ pending_questions: { id, questions } })
-              const answers = await waitForAnswers(id)
-              return questions.map((q, i) => `Q: ${q.question}\nA: ${answers[i] ?? '(no answer)'}`).join('\n\n')
-            }
-
-            // ── request_connection: show connection setup form, wait for result ────
-            if (tc.function.name === 'request_connection') {
-              const id = crypto.randomUUID()
-              writeLine({ pending_connection: { id, ...args } })
-              const result = await waitForConnection(id)
-              if (!result.ok) {
-                return `Connection setup failed or was cancelled: ${result.error ?? 'unknown reason'}. Ask the user if they want to try again.`
-              }
-              return `Connection to ${args.service} verified successfully (id: ${result.connectionId}). Now confirm the specific workflow action with the user, then call create_workflow.`
-            }
-
-            // ── create_workflow: compile → retry if invalid → emit pending_workflow ─
-            if (tc.function.name === 'create_workflow') {
-              writeLine({ tool_status: 'Building workflow…' })
-
-              let compiled = compile(tc.function.arguments)
-
-              for (let retry = 0; !compiled.ok && retry < 2; retry++) {
-                const retryMessages: ChatMessage[] = [
-                  ...loopMessages,
-                  { role: 'tool', content: compileRetryPrompt(compiled.error ?? 'unknown error') },
-                ]
-                try {
-                  const retryResult = await adapter.chat({
-                    model,
-                    messages: retryMessages,
-                    tools: availableTools,
-                    signal: AbortSignal.timeout(60_000),
-                  })
-                  if (retryResult.tool_calls?.[0]?.function?.name === 'create_workflow') {
-                    compiled = compile(retryResult.tool_calls[0].function.arguments)
-                  } else {
-                    break
-                  }
-                } catch { break }
-              }
-
-              if (!compiled.ok) {
-                return `Error building workflow: ${compiled.error}. Please try again with a simpler description.`
-              }
-
-              const pendingWorkflow: WorkflowTool = {
-                ...compiled.workflow!,
-                id: crypto.randomUUID(),
-                createdAt: new Date().toISOString(),
-                runs: [],
-              }
-              writeLine({ pending_workflow: pendingWorkflow })
-              return `Workflow plan shown to user for review. They can edit the steps and save it to the sidebar.`
-            }
-
-            const task = buildTask(tc.function.name, args)
-            return executeTask(task, {
-              requireApproval: async () => true,
-              emitStatus: (msg) => writeLine({ tool_status: msg }),
-              logEvent:   (t, res) => {
-                if (!EVENT_SKIP.has(t.toolName))
-                  appendEvent({ type: 'tool_call', tool: t.toolName, args: t.args, result: res.slice(0, 500) })
-              },
-            })
-          })
-        )
-
-        for (const result of results) {
-          loopMessages.push({ role: 'tool', content: result })
-        }
+        return
       }
 
-      emitToolHistory()
-      await streamFinal(loopMessages)
+      // ── Validate plan ────────────────────────────────────────────────────────
+      const validation = validatePlan(plan)
+      if (!validation.ok) {
+        writeLine({ message: { role: 'assistant', content: `I couldn't build a valid action plan: ${validation.error}` }, done: false })
+        writeLine({ message: { role: 'assistant', content: '' }, done: true })
+        return
+      }
+
+      // ── Phase 2: Deterministic execution ────────────────────────────────────
+      const taskResults = await executePlan(plan, {
+        requireApproval: async (task) => {
+          const id = crypto.randomUUID()
+          writeLine({ pending_approval: { id, tool: `${task.tool}.${task.action}`, args: task.args } })
+          return waitForApproval(id)
+        },
+        emitStep: (step) => {
+          writeLine({ execution_step: step })
+          if (step.status === 'done') {
+            appendEvent({ type: 'tool_call', tool: `${step.tool}.${step.action}`, args: {}, result: (step.result ?? '').slice(0, 500) })
+          }
+        },
+        interceptors: {
+          // memory tasks bypass executeTool — handled inline
+          'memory.add': async (task) => {
+            const { content = '' } = task.args as Record<string, string>
+            const v = validateMemoryEntry(content)
+            if (!v.valid) return `Rejected: ${v.reason}`
+            queueMemoryWrite('memory', 'add', content, ollamaUrl, model)
+            return 'Saved.'
+          },
+          'memory.search': async (task) => {
+            const { query = '' } = task.args as Record<string, string>
+            return readMemory('memory') + (query ? ` (query: ${query})` : '')
+          },
+          'memory.remove': async (task) => {
+            const { id: memId = '' } = task.args as Record<string, string>
+            queueMemoryWrite('memory', 'remove', memId, ollamaUrl, model)
+            return 'Removed.'
+          },
+          // create_workflow: compile and emit preview card
+          'system.create_workflow': async (task) => {
+            writeLine({ tool_status: 'Building workflow…' })
+            const compiled = compile(task.args)
+            if (!compiled.ok) return `Error building workflow: ${compiled.error}`
+            const pendingWorkflow: WorkflowTool = {
+              ...compiled.workflow!,
+              id: crypto.randomUUID(),
+              createdAt: new Date().toISOString(),
+              runs: [],
+            }
+            writeLine({ pending_workflow: pendingWorkflow })
+            return 'Workflow plan shown to user for review.'
+          },
+        },
+      })
+
+      // ── Emit tool history then synthesise final response ─────────────────────
+      const resultsContext = plan.tasks
+        .map(t => `${t.tool}.${t.action}: ${taskResults.get(t.id) ?? '(no result)'}`)
+        .join('\n\n')
+
+      const toolHistoryMsgs: ChatMessage[] = [
+        { role: 'assistant', content: `[Executed ${plan.tasks.length} task(s)]` },
+        { role: 'tool',      content: resultsContext },
+      ]
+      writeLine({ tool_history: toolHistoryMsgs })
+
+      const synthMessages: ChatMessage[] = [
+        ...baseMessages,
+        ...toolHistoryMsgs,
+      ]
+      await streamFinal(synthMessages)
+
     } catch (err) {
       writeLine({ error: err instanceof Error ? err.message : 'Tool loop error' })
     } finally {
