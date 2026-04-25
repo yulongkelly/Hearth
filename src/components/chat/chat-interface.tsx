@@ -159,11 +159,12 @@ export function ChatInterface() {
 
   const activeConversation = conversations.find(c => c.id === activeId) ?? null
 
-  // Close questionnaire when user switches conversations
+  // Close questionnaire and pending workflow when user switches conversations
   useEffect(() => {
     if (prevActiveId.current !== null && prevActiveId.current !== activeId) {
       setPendingQuestions(null)
       ChatStore.setPendingQuestions(null)
+      setPendingWorkflow(null)
     }
     prevActiveId.current = activeId
   }, [activeId])
@@ -207,7 +208,7 @@ export function ChatInterface() {
         setPendingQuestions(null)
         setPendingConnection(null)
         setPendingTool(null)
-        setPendingWorkflow(null)
+        // pendingWorkflow intentionally preserved — card must stay until user saves or cancels
         // Reload from localStorage to pick up content written while away
         setConversations(loadConversations())
       }
