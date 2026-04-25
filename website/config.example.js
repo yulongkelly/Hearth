@@ -13,7 +13,7 @@ const HEARTH_CONFIG = {
     year:        '2026',
   },
   files: {
-    windows: 'Hearth.exe',
+    windows: 'Hearth-Setup.exe',
     mac:     'Hearth.dmg',
     linux:   'Hearth-linux.AppImage',
   },
