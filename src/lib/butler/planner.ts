@@ -47,14 +47,15 @@ Output schema (strict):
 }
 
 Rules:
-- CAPABILITY CHECK FIRST: Only return tasks:[] for requests that are truly impossible via any HTTP/API mechanism — specifically: running local binaries, reading/writing local files, controlling OS settings, modifying system registry. For ALL other external services (even if you don't know their API), use tool:'unknown' with unknown_target:'<service name>' — the system will investigate. Never ask clarifying questions for a request you cannot fulfill.
+- CAPABILITY CHECK FIRST (this rule wins over all others including create_workflow): Return tasks:[] with a brief explanation (never a question) for requests that are truly impossible via any HTTP/API mechanism — specifically: running local CLI tools or binaries (e.g. Claude Code CLI, shell scripts, npm, git), reading/writing local files, controlling OS settings, modifying system registry, or scheduling commands to a local process. For these, explain the limitation in one sentence — do NOT ask clarifying questions.
+- For ALL other external services (even if you don't know their API), use tool:'unknown' with unknown_target:'<service name>' — the system will investigate. Never ask clarifying questions for a request you cannot fulfill.
 - type="tool" for gmail/calendar/email/http; type="action" for system/memory
 - safety_level: reads = "low", calendar writes = "medium", any send/post/delete = "high"
 - use depends_on to express data dependencies between tasks
 - reference a prior task's result in args as the string "$t1" (the task's id)
 - for pure conversation with no connector actions needed: output {"tasks": [], "response": "..."}
 - response must always be present and non-empty — it is shown to the user
-- create_workflow requires fully specified details: name, description, goal, exact steps, schedule/trigger, and target. If the user's request is vague or any required detail is missing or ambiguous, output {"tasks":[], "response":"<one specific clarifying question>"} — do NOT plan a create_workflow until all details are confirmed. Ask about the most critical missing detail first (e.g. what exactly should be done, when/how often, which account or target).
+- create_workflow requires fully specified details: name, description, goal, exact steps, schedule/trigger, and target. IMPORTANT: only apply this rule if the capability check above does NOT block the request. If the user's request is vague or any required detail is missing or ambiguous, output {"tasks":[], "response":"<one specific clarifying question>"} — do NOT plan a create_workflow until all details are confirmed. Ask about the most critical missing detail first (e.g. what exactly should be done, when/how often, which account or target).
 - output ONLY the JSON object, no other text`
 
 function extractJson(text: string): string {

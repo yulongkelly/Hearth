@@ -4,6 +4,7 @@ import path from 'path'
 import type { ModelAdapter } from '@/lib/model-adapter'
 import { readSignalsSince } from './signal-store'
 import { queryWikiAll } from './wiki'
+import { getLocaleForSession } from './locale'
 
 const HEARTH_DIR   = path.join(os.homedir(), '.hearth')
 const MEMORY_DIR   = path.join(HEARTH_DIR, 'memory')
@@ -71,6 +72,10 @@ export async function generateWeeklyDigest(
 
   const label = weekLabel()
 
+  const sampleText = wikiPages[0]?.body ?? ''
+  const locale = getLocaleForSession(sampleText)
+  const localeSuffix = locale.digestPromptSuffix ? `\n${locale.digestPromptSuffix}` : ''
+
   const systemPrompt = `You are generating a weekly digest for a personal AI assistant.
 Write a concise, warm, observational digest. Do NOT be prescriptive or preachy.
 Use this exact format (omit sections if no data):
@@ -93,7 +98,7 @@ Progress this week
 Suggestion
   <One actionable, specific observation — not generic advice>
 
-Keep it under 25 lines total. Only include sections with real data.`
+Keep it under 25 lines total. Only include sections with real data.${localeSuffix}`
 
   try {
     const result = await adapter.chat({

@@ -2,6 +2,7 @@ import type { KnowledgeCluster, WikiPage, PolicyDecision } from './types'
 import type { ModelAdapter } from '@/lib/model-adapter'
 import { listWikiPages, writeWikiPage, serializeFrontmatter, serializeEvidence, toSlug } from './wiki'
 import { INJECTION_PATTERNS, INVISIBLE_UNICODE } from '@/lib/security-runtime'
+import { getLocaleForSession } from './locale'
 
 export function scanWikiContent(content: string): string | null {
   for (const pattern of INJECTION_PATTERNS) {
@@ -52,16 +53,18 @@ export function evaluateCluster(cluster: KnowledgeCluster): PolicyDecision {
 }
 
 function synthPromptForCluster(cluster: KnowledgeCluster, signalList: string): string {
+  let base: string
   if (cluster.entityType === 'person') {
-    return `Summarize what is known about this person from the user's interactions. Write 2-3 declarative sentences covering: their likely role or context (colleague, friend, etc.), interaction pattern (frequency, topics), and recent activity. Do NOT start with "The user". Be direct. Output ONLY the summary.\n\nSignals:\n${signalList}`
+    base = `Summarize what is known about this person from the user's interactions. Write 2-3 declarative sentences covering: their likely role or context (colleague, friend, etc.), interaction pattern (frequency, topics), and recent activity. Do NOT start with "The user". Be direct. Output ONLY the summary.\n\nSignals:\n${signalList}`
+  } else if (cluster.entityType === 'goal') {
+    base = `Summarize this user goal or learning intent. Write 2-3 declarative sentences: what the goal is, current progress if evident, and any declared timeline. Do NOT start with "The user". Be direct. Output ONLY the summary.\n\nSignals:\n${signalList}`
+  } else if (cluster.entityType === 'concern') {
+    base = `Summarize this recurring concern or value. Write 2-3 declarative sentences. Be empathetic and factual. Do NOT start with "The user". Output ONLY the summary.\n\nSignals:\n${signalList}`
+  } else {
+    base = `Summarize this user preference pattern. Write 2-3 declarative sentences. Do NOT start with "The user". Be direct and factual. Output ONLY the summary.\n\nSignals:\n${signalList}`
   }
-  if (cluster.entityType === 'goal') {
-    return `Summarize this user goal or learning intent. Write 2-3 declarative sentences: what the goal is, current progress if evident, and any declared timeline. Do NOT start with "The user". Be direct. Output ONLY the summary.\n\nSignals:\n${signalList}`
-  }
-  if (cluster.entityType === 'concern') {
-    return `Summarize this recurring concern or value. Write 2-3 declarative sentences. Be empathetic and factual. Do NOT start with "The user". Output ONLY the summary.\n\nSignals:\n${signalList}`
-  }
-  return `Summarize this user preference pattern. Write 2-3 declarative sentences. Do NOT start with "The user". Be direct and factual. Output ONLY the summary.\n\nSignals:\n${signalList}`
+  const locale = getLocaleForSession(cluster.signals[0]?.value ?? cluster.primaryTag)
+  return locale.synthPromptSuffix ? `${base}\n${locale.synthPromptSuffix}` : base
 }
 
 export async function synthesizeCluster(
