@@ -162,52 +162,47 @@ low    → silent execution  (get_inbox, memory read, summarize)
 
 ## Butler Pipeline
 
-### Two-Phase Execution
+### ReAct Loop
 
-The old problem: LLM directly called tools inside the loop — LLM was actually controlling execution.
+Replaced the original single-shot planning architecture with a ReAct (Reason + Act) loop. Each iteration the LLM decides one next action based on what it has seen so far, rather than generating a complete plan upfront.
 
-Changed to two phases:
+**Why:** The old architecture required hardcoded rules for every proactive behavior ("before booking travel, check calendar"). With ReAct the model's own domain knowledge drives what to fetch — no enumeration needed.
 
-**Phase 1: Planning (LLM participates)**
 ```
 User input
-  → load memory (hearth.md + user.txt + top-5 semantic from memory.txt)
-  → LLM generates complete TaskPlan (one shot)
-  → Validator: schema + deps + connector registry check
-  → if invalid: retry LLM (max 2x), then return error to user
-  → Plan Judge (LLM-as-judge, soft gate):
-      → does the plan match the user's original request?
-      → reject on scope drift or unexpected exfiltration destination
-      → fails open if judge unavailable
-  → if approved: proceed to Phase 2
-```
-
-**Phase 2: Execution (Deterministic — no LLM)**
-```
-TaskPlan
-  → topological sort by depends_on
-  → for each task:
-      → enforcePolicy(task.safety_level)
-      → if high: emit pending_approval, wait for user
-      → resolve $ref args from prior task results
-      → enforceSecurityPolicy() — hard gate:
-          → capability check (connector + action must be registered)
-          → path traversal guard (all string args)
-          → artifact injection guard ("actions": embedded in strings)
-          → memory injection check (memory.add content)
-          → outbound injection guard (send_email / http.post / http.delete bodies)
-          → http connection requirement (named connection, no bare URLs)
-          → invisible unicode sanitization
-      → if blocked: emit blocked step, skip execution
-      → execute: type=tool   → /api/tools/execute
-                 type=action → /api/tools/action
-      → store result in task context
-      → emit execution_step event to UI
-  → emitToolHistory()
+  → load memory (hearth.md + user.txt + top-5 semantic from memory.txt + goal wiki pages)
+  → ReAct loop (max 5 iterations):
+      → reactStep(messages, accumulated, adapter, model)
+          → LLM reasons and outputs ONE next action, or action:null if done
+          → hard dedup guard: same tool.action cannot repeat in one session
+      → if action:null: break
+      → validatePlan(singleTask)    — schema + registry check; break on failure
+      → resolveCapabilities()       — resolve unknown targets
+      → executePlan(singleTask, ctx):
+          → enforcePolicy(safety_level)
+          → if high: emit pending_approval, wait for user
+          → enforceSecurityPolicy() — hard gate (unchanged):
+              → capability check, path traversal, artifact injection,
+                memory injection, outbound injection, unicode sanitization
+          → if blocked: emit blocked step, skip
+          → execute: type=tool → /api/tools/execute
+                     type=action → /api/tools/action
+          → emit execution_step to UI
+      → accumulate {thought, task, result}
+  → emit tool_history (alternating assistant reasoning + tool result messages)
   → [fire-and-forget] Knowledge pipeline (see below)
-  → [synchronous] queryWiki(task tool names) → inject <user_preferences> into synthesis prompt
+  → [synchronous] rankWikiPages() → inject <user_preferences> into synthesis prompt
   → streamFinal()
   → flushMemoryQueue()
+```
+
+**Proactive habits baked into reactStep prompt (butler behavior, not hardcoded rules):**
+```
+Time-sensitive request (travel, booking, appointment) → check calendar.get_events first
+Named person (email to X, schedule with X)           → search memory for person context first
+Email reply / follow-up                              → fetch inbox thread first
+Purchase / subscription                              → search memory for spending preferences first
+Recommendation (tool, product, service)              → search memory for user preferences first
 ```
 
 **Knowledge pipeline (fire-and-forget, does not block synthesis):**
@@ -225,7 +220,7 @@ extractObservations(messages, taskResults) → PreferenceSignal[]
           → executeDecision() → scanWikiContent() → writeWikiPage()
 ```
 
-**Result: LLM is the advisor. You are the executor.**
+**Result: LLM reasons step by step. Each individual action is still deterministically validated and executed.**
 
 ---
 
@@ -336,7 +331,9 @@ The knowledge layer runs independently of the butler. Butler reads from it; it i
 ```
 preference   — communication style, format choices, tool preferences
 fact         — objective facts (job, location, name)
-pattern      — recurring behavior across sessions
+pattern      — recurring behavior across sessions;
+               also: spending habits extracted from financial tool results
+               (domain: spending, metadata: { platform, category })
 relationship — person the user interacts with (domain: people)
                metadata: { person, sentiment }
 concern      — worry or stress (domain: wellbeing)

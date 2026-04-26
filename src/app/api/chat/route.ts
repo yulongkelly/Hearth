@@ -4,10 +4,12 @@ import path from 'path'
 import os from 'os'
 import { getModelAdapter } from '@/lib/adapters/registry'
 import type { ChatMessage } from '@/lib/model-adapter'
-import { planFromMessage } from '@/lib/butler/planner'
+import type { TaskPlan, PlanTask } from '@/lib/butler/planner'
 import { validatePlan } from '@/lib/butler/plan-validator'
-import { judgePlan } from '@/lib/butler/plan-judge'
 import { executePlan } from '@/lib/butler/plan-executor'
+import type { ExecutionStep } from '@/lib/butler/plan-executor'
+import { reactStep } from '@/lib/butler/react-planner'
+import type { AccumulatedStep } from '@/lib/butler/react-planner'
 import { resolveCapabilities } from '@/lib/butler/capability-resolver'
 import { readMemory, readMemoryTrimmed, readMemoryEntries, queueMemoryWrite, flushMemoryQueue } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
@@ -22,7 +24,7 @@ import { extractObservations } from '@/lib/knowledge/observation-extractor'
 import { appendSignal, readSignalsSince } from '@/lib/knowledge/signal-store'
 import { aggregateSignals } from '@/lib/knowledge/memory-aggregator'
 import { evaluateCluster, executeDecision, synthesizeCluster } from '@/lib/knowledge/memory-policy'
-import { queryWiki, queryWikiByEntityType, extractTagsFromTools } from '@/lib/knowledge/wiki'
+import { queryWikiByEntityType, listWikiPages, rankWikiPages } from '@/lib/knowledge/wiki'
 
 // ─── hearth.md — user-editable static instructions, always loaded ─────────────
 
@@ -69,7 +71,7 @@ const NDJSON_HEADERS = {
 
 const MAX_TOOL_ITERATIONS = 5
 
-const SYSTEM_MESSAGE = `You are a knowledgeable, direct assistant. Think through problems yourself first — reason from your own knowledge and give concrete, opinionated answers like a senior engineer would. Do NOT frame your answer around what tools you have or don't have. Do NOT open with "I cannot" or list options mechanically. Just answer the question directly, then mention tools or integrations only if they genuinely add value.
+const SYSTEM_MESSAGE = `You are a knowledgeable, direct assistant. Think through problems yourself first — reason from your own knowledge and give concrete, opinionated answers like a senior engineer would. Do NOT frame your answer around what tools you have or don't have. Do NOT open with "I cannot" or list options mechanically. Just answer the question directly, then mention tools or integrations only if they genuinely add value. Never mention tool names, tool execution errors, or internal details — if a fetch succeeded, present the result; if something couldn't be retrieved, say what's unavailable in plain terms.
 
 IMPORTANT: Your tools (Gmail, Calendar, workflows) are for fetching live data or automating tasks — not for answering conceptual or advisory questions. If the user asks "how do I do X", answer from knowledge. Only reach for tools when the user needs real-time data (e.g. "what's in my inbox") or wants to automate something specific.
 
@@ -191,151 +193,131 @@ export async function POST(req: NextRequest) {
       const systemMsg: ChatMessage = { role: 'system', content: fullSystemMessage }
       const baseMessages: ChatMessage[] = hasSystem ? [...messages] : [systemMsg, ...messages]
 
-      // ── Phase 1: Planning ────────────────────────────────────────────────────
-      const plan = await planFromMessage(baseMessages, '', adapter, model)
-
-      // Pure conversation — planner reasoned through this (capability check, clarification, etc.)
-      // Trust its response directly. Only fall back to streamFinal if the planner gave nothing.
-      if (plan.tasks.length === 0) {
-        if (plan.response) {
-          writeLine({ message: { role: 'assistant', content: plan.response }, done: false })
-          writeLine({ message: { role: 'assistant', content: '' }, done: true })
-        } else {
-          await streamFinal(baseMessages)
-        }
-        return
-      }
-
-      // ── Validate plan ────────────────────────────────────────────────────────
-      const validation = validatePlan(plan)
-      if (!validation.ok) {
-        writeLine({ message: { role: 'assistant', content: `I couldn't build a valid action plan: ${validation.error}` }, done: false })
-        writeLine({ message: { role: 'assistant', content: '' }, done: true })
-        return
-      }
-
-      // ── Judge: semantic scope check ──────────────────────────────────────────
-      const originalRequest = [...(messages as ChatMessage[])]
-        .reverse().find(m => m.role === 'user')?.content ?? ''
-      const judgeResult = await judgePlan(plan, originalRequest, adapter, model)
-      if (!judgeResult.approved) {
-        writeLine({ message: { role: 'assistant', content: `I can't execute that plan: ${judgeResult.reason}` }, done: false })
-        writeLine({ message: { role: 'assistant', content: '' }, done: true })
-        return
-      }
-
-      // ── Capability resolution: investigate unknown targets per-task ──────────
-      const resolvedPlan = await resolveCapabilities(plan)
-
-      // ── Phase 2: Deterministic execution ────────────────────────────────────
-      const taskResults = await executePlan(resolvedPlan, {
-        requireApproval: async (task) => {
-          const id = crypto.randomUUID()
-          writeLine({ pending_approval: { id, tool: `${task.tool}.${task.action}`, args: task.args } })
-          return waitForApproval(id)
-        },
-        emitStep: (step) => {
-          writeLine({ execution_step: step })
-          if (step.status === 'done') {
-            appendEvent({ type: 'tool_call', tool: `${step.tool}.${step.action}`, args: {}, result: (step.result ?? '').slice(0, 500) })
-          }
-        },
-        interceptors: {
-          // memory tasks bypass executeTool — handled inline
-          'memory.add': async (task) => {
-            const { content = '' } = task.args as Record<string, string>
-            const v = validateMemoryEntry(content)
-            if (!v.valid) return `Rejected: ${v.reason}`
-            queueMemoryWrite('memory', 'add', content, ollamaUrl, model)
-            return 'Saved.'
-          },
-          'memory.search': async (task) => {
-            const { query = '' } = task.args as Record<string, string>
-            return readMemory('memory') + (query ? ` (query: ${query})` : '')
-          },
-          'memory.remove': async (task) => {
-            const { id: memId = '' } = task.args as Record<string, string>
-            queueMemoryWrite('memory', 'remove', memId, ollamaUrl, model)
-            return 'Removed.'
-          },
-          // generate_digest: synthesize and store weekly digest
-          'system.generate_digest': async () => {
-            const { generateWeeklyDigest, writePendingDigest } = await import('@/lib/knowledge/weekly-digest')
-            const digest = await generateWeeklyDigest(adapter, model)
-            writePendingDigest(digest)
-            return 'Weekly digest generated.'
-          },
-          // unknown.call: capability was resolved — emit blocked_step or pending_connection
-          'unknown.call': async (task) => {
-            const target = task.unknown_target ?? String(task.args.target ?? 'unknown service')
-            if (task.status === 'blocked') {
-              writeLine({ blocked_step: { taskId: task.id, target, reason: task.args.reason } })
-              return `Cannot connect to ${target}: ${task.args.reason}`
-            }
-            if (task.status === 'needs_connection') {
-              writeLine({ pending_connection: {
-                id: task.id,
-                target,
-                capabilitySpec: task.args.capabilitySpec,
-                searchSummary:  task.args.searchSummary,
-              }})
-              return `Connection setup required for ${target}.`
-            }
-            return `Unknown status for ${target}.`
-          },
-          // create_workflow: compile and emit preview card
-          'system.create_workflow': async (task) => {
-            writeLine({ tool_status: 'Building workflow…' })
-            const compiled = compile(task.args)
-            if (!compiled.ok) return `Error building workflow: ${compiled.error}`
-            const pendingWorkflow: WorkflowTool = {
-              ...compiled.workflow!,
-              id: crypto.randomUUID(),
-              createdAt: new Date().toISOString(),
-              runs: [],
-            }
-            writeLine({ pending_workflow: pendingWorkflow })
-            return 'Workflow plan shown to user for review.'
-          },
-        },
-      })
-
-      // ── Emit tool history then synthesise final response ─────────────────────
-      const resultsContext = resolvedPlan.tasks
-        .map(t => `${t.tool}.${t.action}: ${taskResults.get(t.id) ?? '(no result)'}`)
-        .join('\n\n')
-
-      const toolHistoryMsgs: ChatMessage[] = [
-        { role: 'assistant', content: `[Executed ${plan.tasks.length} task(s)]` },
-        { role: 'user',      content: `Tool results:\n${resultsContext}` },
-      ]
-      writeLine({ tool_history: toolHistoryMsgs })
-
-      // ── Knowledge pipeline (fire-and-forget — does not block synthesis) ───────
-      const _sessionId = crypto.randomUUID()
-      ;(async () => {
-        try {
-          const userMsgs = (messages as ChatMessage[]).filter(m => m.role === 'user' || m.role === 'assistant')
-          const signals  = await extractObservations(userMsgs, taskResults, _sessionId, adapter, model)
-          for (const sig of signals) appendSignal(sig)
-          if (signals.length > 0) {
-            const cutoff   = new Date(Date.now() - 90 * 86_400_000).toISOString()
-            const clusters = aggregateSignals(readSignalsSince(cutoff))
-            for (const cluster of clusters) {
-              const decision = evaluateCluster(cluster)
-              if (decision.action !== 'ignore') {
-                const synthesis = await synthesizeCluster(cluster, adapter, model)
-                executeDecision(decision, synthesis)
+      function runKnowledgePipeline(msgs: ChatMessage[], results: Map<string, string>): void {
+        const sessionId = crypto.randomUUID()
+        ;(async () => {
+          try {
+            const userMsgs = msgs.filter(m => m.role === 'user' || m.role === 'assistant')
+            const signals  = await extractObservations(userMsgs, results, sessionId, adapter, model)
+            for (const sig of signals) appendSignal(sig)
+            if (signals.length > 0) {
+              const cutoff   = new Date(Date.now() - 90 * 86_400_000).toISOString()
+              const clusters = aggregateSignals(readSignalsSince(cutoff))
+              for (const cluster of clusters) {
+                const decision = evaluateCluster(cluster)
+                if (decision.action !== 'ignore') {
+                  const synthesis = await synthesizeCluster(cluster, adapter, model)
+                  executeDecision(decision, synthesis)
+                }
               }
             }
-          }
-        } catch { /* non-critical */ }
-      })()
+          } catch { /* non-critical */ }
+        })()
+      }
 
-      // ── Wiki context injection ─────────────────────────────────────────────────
-      const wikiPages = queryWiki(extractTagsFromTools(plan.tasks.map(t => t.tool)))
-      const wikiBlock = wikiPages.length > 0
-        ? `<user_preferences>\n${wikiPages.map(p =>
+      // ── ReAct Loop: reason → act → observe, repeat ──────────────────────────
+      const interceptors: Record<string, (task: PlanTask) => Promise<string>> = {
+        'memory.add': async (task) => {
+          const { content = '' } = task.args as Record<string, string>
+          const v = validateMemoryEntry(content)
+          if (!v.valid) return `Rejected: ${v.reason}`
+          queueMemoryWrite('memory', 'add', content, ollamaUrl, model)
+          return 'Saved.'
+        },
+        'memory.search': async (task) => {
+          const { query = '' } = task.args as Record<string, string>
+          return readMemory('memory') + (query ? ` (query: ${query})` : '')
+        },
+        'memory.remove': async (task) => {
+          const { id: memId = '' } = task.args as Record<string, string>
+          queueMemoryWrite('memory', 'remove', memId, ollamaUrl, model)
+          return 'Removed.'
+        },
+        'system.generate_digest': async () => {
+          const { generateWeeklyDigest, writePendingDigest } = await import('@/lib/knowledge/weekly-digest')
+          const digest = await generateWeeklyDigest(adapter, model)
+          writePendingDigest(digest)
+          return 'Weekly digest generated.'
+        },
+        'unknown.call': async (task) => {
+          const target = task.unknown_target ?? String(task.args.target ?? 'unknown service')
+          if (task.status === 'blocked') {
+            writeLine({ blocked_step: { taskId: task.id, target, reason: task.args.reason } })
+            return `Cannot connect to ${target}: ${task.args.reason}`
+          }
+          if (task.status === 'needs_connection') {
+            writeLine({ pending_connection: {
+              id: task.id,
+              target,
+              capabilitySpec: task.args.capabilitySpec,
+              searchSummary:  task.args.searchSummary,
+            }})
+            return `Connection setup required for ${target}.`
+          }
+          return `Unknown status for ${target}.`
+        },
+        'system.create_workflow': async (task) => {
+          writeLine({ tool_status: 'Building workflow…' })
+          const compiled = compile(task.args)
+          if (!compiled.ok) return `Error building workflow: ${compiled.error}`
+          const pendingWorkflow: WorkflowTool = {
+            ...compiled.workflow!,
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+            runs: [],
+          }
+          writeLine({ pending_workflow: pendingWorkflow })
+          return 'Workflow plan shown to user for review.'
+        },
+      }
+
+      const requireApproval = async (task: PlanTask) => {
+        const id = crypto.randomUUID()
+        writeLine({ pending_approval: { id, tool: `${task.tool}.${task.action}`, args: task.args } })
+        return waitForApproval(id)
+      }
+
+      const emitStep = (step: ExecutionStep) => {
+        writeLine({ execution_step: step })
+        if (step.status === 'done') {
+          appendEvent({ type: 'tool_call', tool: `${step.tool}.${step.action}`, args: {}, result: (step.result ?? '').slice(0, 500) })
+        }
+      }
+
+      const accumulated: AccumulatedStep[] = []
+      const allTaskResults = new Map<string, string>()
+
+      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        const reactResult = await reactStep(baseMessages, accumulated, adapter, model)
+        if (reactResult.action === null) break
+
+        const singlePlan: TaskPlan = { tasks: [reactResult.action], response: '' }
+        const validation = validatePlan(singlePlan)
+        if (!validation.ok) break
+
+        const resolvedPlan = await resolveCapabilities(singlePlan)
+        const taskResults = await executePlan(resolvedPlan, { requireApproval, emitStep, interceptors })
+
+        const result = taskResults.get(reactResult.action.id) ?? '(no result)'
+        accumulated.push({ thought: reactResult.thought, task: reactResult.action, result })
+        allTaskResults.set(`${reactResult.action.tool}.${reactResult.action.action}`, result)
+      }
+
+      const toolHistoryMsgs: ChatMessage[] = accumulated.flatMap(s => [
+        { role: 'assistant', content: `[Reasoning: ${s.thought}]\n${s.task.tool}.${s.task.action} ${JSON.stringify(s.task.args)}` },
+        { role: 'user',      content: s.result.slice(0, 2000) },
+      ])
+      if (toolHistoryMsgs.length > 0) writeLine({ tool_history: toolHistoryMsgs })
+
+      // ── Knowledge pipeline (fire-and-forget — does not block synthesis) ───────
+      runKnowledgePipeline(messages as ChatMessage[], allTaskResults)
+
+      // ── Wiki context injection (semantic ranking: relevance×0.6 + frequency×0.25 + recency×0.15) ──
+      const goalPageIds  = new Set(goalPages.map(p => p.frontmatter.id))
+      const nonGoalPages = listWikiPages().filter(p => !goalPageIds.has(p.frontmatter.id))
+      const rankedPages  = await rankWikiPages(String(lastUserMsg).slice(0, 500), nonGoalPages, ollamaUrl, model, 5)
+      const wikiBlock    = rankedPages.length > 0
+        ? `<user_preferences>\n${rankedPages.map(p =>
             `[${p.frontmatter.title}] (confidence: ${p.frontmatter.confidence})\n${p.body}`
           ).join('\n\n')}\n</user_preferences>`
         : ''
