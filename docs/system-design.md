@@ -207,12 +207,21 @@ Recommendation (tool, product, service)              → search memory for user 
 
 **Knowledge pipeline (fire-and-forget, does not block synthesis):**
 ```
-extractObservations(messages, taskResults) → PreferenceSignal[]
+Runs after EVERY turn — tool-using AND pure conversation alike.
+taskResults passed as tool.action-keyed map (e.g. "gmail.get_inbox", "plaid.get_transactions")
+
+extractObservations(messages, namedResults) → PreferenceSignal[]
+  → reads user messages
+  → reads email sender lines (key matches /gmail|inbox|email/i — never full bodies)
+  → reads financial data lines (key matches /expense|transaction|spend|finance|plaid/i)
+      only: name / merchant / category / amount / price / platform fields
+      never: account numbers, card numbers, routing numbers
   → appendSignal() each signal to ~/.hearth/memory/signals.jsonl (encrypted)
   → if signals extracted:
       → aggregateSignals(readSignalsSince(90d))
           → group by primary tag
-          → filter: frequency ≥ 3 AND span ≥ 24h
+          → threshold: frequency=1 → always passes
+                       frequency>1 → frequency ≥ 1 AND span ≥ 24h
           → compute confidence = frequency / (frequency + 2)
       → for each cluster above threshold:
           → evaluateCluster() → write / merge / ignore
@@ -350,10 +359,14 @@ Post-execution (fire-and-forget)
   │
   ├─ [1] Observation Extractor (observation-extractor.ts)
   │       LLM call (15s timeout, fails to [])
-  │       Input:  user messages + email sender names from tool results (not bodies)
+  │       Input:  user messages
+  │               + email sender lines (key /gmail|inbox|email/i — never full bodies)
+  │               + financial data lines (key /expense|transaction|spend|finance|plaid/i)
+  │                   only: name / merchant / category / amount / price / platform
+  │                   never: account numbers, card numbers, routing numbers
+  │       Tool results keyed by "tool.action" (e.g. "gmail.get_inbox")
   │       Output: PreferenceSignal[] — {type, domain, value, tags[], sessionId, metadata?}
   │       Rule:   only explicit or strongly implied signals extracted
-  │               raw email body content never passed to extractor
   │
   ├─ [2] Signal Store (signal-store.ts)
   │       ~/.hearth/memory/signals.jsonl — per-line encrypted (encryptLine)
@@ -362,8 +375,11 @@ Post-execution (fire-and-forget)
   ├─ [3] Memory Aggregator (memory-aggregator.ts)  ← deterministic, no LLM
   │       Relationship signals: group by metadata.person first → entity cluster per person
   │       All others: group by primary tag (tags[0] ?? domain)
-  │       Repetition threshold: frequency ≥ 3 AND span > 24h
+  │       Write threshold:
+  │         frequency = 1  → always passes (confidence 0.33 — unique fact, low confidence)
+  │         frequency > 1  → frequency ≥ 1 AND span ≥ 24h
   │       Confidence: frequency / (frequency + 2)
+  │         1 signal → 0.33  |  3 signals → 0.60  |  8 signals → 0.80
   │       Computes: week_counts (ISO week → count), trajectory (improving/declining/stable)
   │       Output: KnowledgeCluster[] sorted by confidence desc
   │
@@ -381,7 +397,8 @@ Post-execution (fire-and-forget)
           ~/.hearth/memory/wiki/<slug>.md — plain UTF-8, mode 0600
           ~/.hearth/memory/wiki/index.md  — human-readable directory
           Atomic writes: .tmp + rename
-          Queries: queryWiki(tags), queryWikiByEntityType(type), queryWikiAll()
+          Queries: rankWikiPages(query, pages, ollamaUrl, model, topK)
+                   queryWikiByEntityType(type), queryWikiAll(), listWikiPages()
           Person pages: person-<name>.md  |  Goal pages: goal-<slug>.md
 ```
 
@@ -476,23 +493,28 @@ Working toward Rust proficiency. Progress is steady; currently focused on owners
 | Invariant | Enforcement |
 |---|---|
 | LLM never writes to wiki directly | Only `executeDecision()` calls `writeWikiPage()` |
-| Repetition is computed, not interpreted | `aggregateSignals()` is pure deterministic logic |
+| Frequency is computed, not interpreted | `aggregateSignals()` is pure deterministic logic |
 | No write without security scan | `scanWikiContent()` runs before every `writeWikiPage()` |
 | Wiki files remain user-editable | Plain UTF-8, no encryption — same format as hearth.md |
-| Butler reads wiki, does not own it | `queryWiki/queryWikiByEntityType/queryWikiAll` in `chat/route.ts`; all writes go through policy |
+| Butler reads wiki, does not own it | `rankWikiPages/queryWikiByEntityType` in `chat/route.ts`; all writes go through policy |
 | Confidence score is bounded and formulaic | `freq / (freq + 2)` — no LLM-assigned confidence |
-| Raw email content never persisted | Extractor receives only sender-name lines from tool results, never full bodies |
+| Financial data never fully persisted | Extractor takes only name/merchant/category/amount/price/platform lines; account and card numbers excluded |
 | Goal pages always injected | `queryWikiByEntityType('goal')` loaded into every system prompt |
+| Knowledge pipeline runs every turn | Fires after both tool-using turns AND pure conversation turns |
 
 ### Wiki Retrieval at Synthesis Time
 
 ```
-plan.tasks.map(t => t.tool)
-  → extractTagsFromTools()   gmail/email → "email", calendar → "calendar", http → "web"
-  → queryWiki(tags)          tag string match on frontmatter.tags (case-insensitive)
-  → if pages found:
-      inject <user_preferences> block into synthesis prompt
+lastUserMsg (string, ≤500 chars)
+  → rankWikiPages(query, nonGoalPages, ollamaUrl, model, topK=5)
+      → embed query via Ollama (5s timeout)
+      → for each page: embed title + tags + body[:200]
+      → score = relevance×0.6 + (freq/maxFreq)×0.25 + exp(-daysSince/30)×0.15
+      → if Ollama unavailable: relevance=0 → degrades to frequency+recency ranking
+      → return top-5 pages
+  → inject <user_preferences> block into synthesis prompt
       format: [Page Title] (confidence: 0.92)\n<body>
+  → goal pages excluded (already in <user_goals> — no double injection)
 ```
 
 ### API Routes (butler reads via these; does not own wiki)
@@ -605,7 +627,7 @@ system = SYSTEM_MESSAGE
        + <user_profile>user.txt</user_profile>
        + <user_goals>goal wiki pages — ALWAYS injected</user_goals>
        + <memory>top-5 relevant entries</memory>
-       + [after execution] <user_preferences>tag-matched wiki pages</user_preferences>
+       + [after execution] <user_preferences>top-5 ranked wiki pages (semantic + freq + recency)</user_preferences>
 ```
 
 **Write pipeline (flat memory):**
@@ -676,35 +698,37 @@ User types message
       → filter hidden msgs: keep all if ≤20, keep last 10 if >20
       → POST /api/chat {model, messages: [visible + pruned hidden]}
 
-  → /api/chat — Phase 1: Planning
-      → load hearth.md + user.txt (LIFO) + top-5 memory.txt (semantic)
-      → LLM generates TaskPlan (one shot)
-      → Validator: schema + deps + connector registry check
-      → if invalid: retry LLM (max 2x), then return error to user
-      → Plan Judge: LLM verifies plan matches original request scope (fails open)
-      → if rejected: return error to user
-
-  → /api/chat — Phase 2: Execution
-      → topological sort tasks by depends_on
-      → for each task:
-          → enforcePolicy(task.safety_level)
+  → /api/chat — ReAct loop (max 5 iterations)
+      → load hearth.md + user.txt (LIFO) + top-5 memory.txt (semantic) + goal wiki pages
+      → reactStep(messages, accumulated, adapter, model)
+          → LLM outputs ONE next action, or action:null if done
+          → dedup guard: same tool.action cannot repeat in one session
+      → if action:null: break (pure conversation → streamFinal directly)
+      → validatePlan(singleTask)   — schema + registry check; break on failure
+      → resolveCapabilities()      — resolve unknown targets
+      → executePlan(singleTask):
+          → enforcePolicy(safety_level)
           → if high: emit pending_approval → wait /api/tools/approve
-          → resolve $ref args from prior task results
           → enforceSecurityPolicy() → if blocked: emit blocked, skip
           → type=tool   → /api/tools/execute → external API
           → type=action → /api/tools/action  → in-process
           → emit execution_step event to UI
+      → accumulate {thought, task, result}
       → emitToolHistory()
 
-  → /api/chat — Knowledge pipeline (fire-and-forget, does not block synthesis)
-      → extractObservations(messages, taskResults)
+  → /api/chat — Knowledge pipeline (fire-and-forget, ALWAYS runs — tool and pure conversation turns)
+      → build namedResults map keyed by "tool.action"
+      → extractObservations(messages, namedResults)
+          → reads user messages + email senders + financial field lines
       → appendSignal() each to signals.jsonl
-      → aggregateSignals() → clusters meeting threshold
+      → aggregateSignals() → clusters (frequency=1 passes; frequency>1 needs span≥24h)
       → for each cluster: evaluateCluster() → synthesizeCluster() → executeDecision()
 
   → /api/chat — Synthesis
-      → queryWiki(extractTagsFromTools(plan.tasks))
-      → if wiki pages found: append <user_preferences> to synthesis messages
+      → rankWikiPages(lastUserMsg, nonGoalPages, ollamaUrl, model, 5)
+          → score = relevance×0.6 + freq×0.25 + recency×0.15
+          → Ollama unavailable → frequency+recency fallback
+      → if ranked pages: append <user_preferences> to synthesis messages
       → streamFinal()
       → flushMemoryQueue() — semantic dedup → write memory.txt
       → writer.close()
@@ -785,9 +809,10 @@ scanWikiContent(content)
 
 Additional constraints:
 - Signals are encrypted at rest (same `encryptLine` as events.jsonl)
-- Aggregator threshold (≥3 signals, ≥24h span) prevents single-shot manipulation
+- Single-observation clusters write with confidence 0.33 — visible low confidence, not suppressed
 - Confidence formula (`freq / (freq + 2)`) is deterministic — LLM cannot inflate it
 - `evaluateCluster()` uses tag string match, not LLM judgment, to find existing pages
+- Financial extractor filters to safe structural fields only (name/merchant/category/amount/price/platform)
 
 ### Threat Coverage
 
@@ -802,7 +827,7 @@ Additional constraints:
 | Scope drift (unexpected actions) | Judge | Rejected before execution |
 | Cross-step contamination via `$ref` | Runtime | Re-checked after resolution |
 | Capability drift (new connectors) | Validator + Tests | Registry-derived test catches gaps automatically |
-| Single-turn wiki pollution | Aggregator threshold | Requires ≥3 signals spanning ≥24h |
+| Single-turn wiki pollution | Confidence visibility | Single-obs writes at confidence 0.33; multi-obs (≥24h span) required for higher confidence |
 | LLM-inflated confidence | Aggregator formula | Confidence = freq / (freq + 2), never LLM-assigned |
 
 ---
@@ -811,7 +836,7 @@ Additional constraints:
 
 | Principle | How |
 |---|---|
-| **LLM as planner only** | LLM generates TaskPlan once; no LLM inside execution loop |
+| **LLM as planner only** | LLM reasons step-by-step (ReAct); each individual action still deterministically validated and executed |
 | **Strict Task IR** | All tasks validated against connector schema before execution; invalid plan = rejected |
 | **Safety-level driven policy** | `safety_level` on every action drives approval gate; no hardcoded toolName checks |
 | **Two-layer security** | Plan Judge (semantic scope) + Security Runtime (deterministic per-task gate); neither depends on the other |
@@ -822,8 +847,8 @@ Additional constraints:
 | **Visible execution** | Every task emits `execution_step`; user always sees what AI is doing |
 | **Connector OS** | Each connector has strict schema; new connectors get policy/validation automatically |
 | **Cross-session memory** | hearth.md (static) + user.txt (always) + memory.txt (top-5 semantic) |
-| **Knowledge memory** | wiki/*.md — inferred from repeated behavior (≥3 signals, ≥24h); user-editable plain text |
-| **Repetition is computed** | Aggregator uses deterministic tag clustering + threshold; LLM cannot trigger a wiki write in a single turn |
+| **Knowledge memory** | wiki/*.md — every unique observation recorded (confidence 0.33); repeated behavior raises confidence; user-editable plain text |
+| **Frequency is computed** | Aggregator uses deterministic tag clustering; confidence = freq/(freq+2); single-obs allowed but low-confidence |
 | **Knowledge independence** | Butler reads wiki via query API; all writes go through policy engine; no butler-owned knowledge state |
 | **Encrypted storage** | Credentials + memory + signals use AES-256-GCM via `secure-storage.ts`; wiki files stay plain text for user editability |
 | **Multi-account Google** | All Google calls resolve from `~/.hearth/google-accounts.json`; tokens auto-refresh |
