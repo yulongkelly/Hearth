@@ -13,6 +13,7 @@ export interface ChatOptions {
   messages: ChatMessage[]
   tools?: object[]
   signal?: AbortSignal
+  think?: boolean
 }
 
 export interface ChatResult {
