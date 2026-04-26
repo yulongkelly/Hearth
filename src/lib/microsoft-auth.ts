@@ -1,0 +1,132 @@
+import path from 'path'
+import os from 'os'
+import { readEncrypted, writeEncrypted } from './secure-storage'
+
+const HEARTH_DIR = path.join(os.homedir(), '.hearth')
+const CREDENTIALS_FILE = path.join(HEARTH_DIR, 'microsoft-credentials.json')
+const ACCOUNTS_FILE = path.join(HEARTH_DIR, 'microsoft-accounts.json')
+
+export interface MicrosoftTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+}
+
+export interface MicrosoftAccount extends MicrosoftTokens {
+  nickname?: string | null
+}
+
+export type MicrosoftAccounts = Record<string, MicrosoftAccount>
+
+function readCredentials(): { clientId: string; clientSecret: string } | null {
+  const raw = readEncrypted<{ clientId: string; clientSecret: string }>(CREDENTIALS_FILE)
+  if (raw?.clientId && raw?.clientSecret) return raw
+  return null
+}
+
+export function isConfigured(): boolean {
+  const creds = readCredentials()
+  return creds !== null
+}
+
+export function saveCredentials(clientId: string, clientSecret: string) {
+  writeEncrypted(CREDENTIALS_FILE, { clientId, clientSecret })
+}
+
+export function loadAccounts(): MicrosoftAccounts {
+  return readEncrypted<MicrosoftAccounts>(ACCOUNTS_FILE) ?? {}
+}
+
+export function saveAccounts(accounts: MicrosoftAccounts) {
+  writeEncrypted(ACCOUNTS_FILE, accounts)
+}
+
+export function addAccount(email: string, tokens: MicrosoftTokens, nickname?: string) {
+  const accounts = loadAccounts()
+  accounts[email] = {
+    ...tokens,
+    nickname: nickname ?? accounts[email]?.nickname ?? null,
+  }
+  saveAccounts(accounts)
+}
+
+export function removeAccount(email: string) {
+  const accounts = loadAccounts()
+  delete accounts[email]
+  saveAccounts(accounts)
+}
+
+export function listAccounts(): Array<{ email: string; nickname?: string | null }> {
+  return Object.entries(loadAccounts()).map(([email, acc]) => ({ email, nickname: acc.nickname }))
+}
+
+export function setNickname(email: string, nickname: string) {
+  const accounts = loadAccounts()
+  if (!accounts[email]) return
+  accounts[email].nickname = nickname.trim() || null
+  saveAccounts(accounts)
+}
+
+export async function getValidAccessTokenForAccount(email: string): Promise<string | null> {
+  const accounts = loadAccounts()
+  const account = accounts[email]
+  if (!account) return null
+  if (Date.now() < account.expiresAt - 60_000) return account.accessToken
+
+  const creds = readCredentials()
+  if (!creds) return null
+
+  const res = await fetch(`https://login.microsoftonline.com/common/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      refresh_token: account.refreshToken,
+      grant_type: 'refresh_token',
+      scope: SCOPES,
+    }),
+  })
+
+  if (!res.ok) return null
+  const data = await res.json()
+  accounts[email] = {
+    ...accounts[email],
+    accessToken: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  }
+  saveAccounts(accounts)
+  return accounts[email].accessToken
+}
+
+export function buildAuthUrl(): string {
+  const creds = readCredentials()
+  if (!creds) throw new Error('Microsoft credentials not configured')
+  const url = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
+  url.searchParams.set('client_id', creds.clientId)
+  url.searchParams.set('redirect_uri', REDIRECT_URI)
+  url.searchParams.set('response_type', 'code')
+  url.searchParams.set('scope', SCOPES)
+  url.searchParams.set('response_mode', 'query')
+  return url.toString()
+}
+
+export async function exchangeCode(code: string) {
+  const creds = readCredentials()
+  if (!creds) throw new Error('Microsoft credentials not configured')
+  return fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: creds.clientId,
+      client_secret: creds.clientSecret,
+      redirect_uri: REDIRECT_URI,
+      grant_type: 'authorization_code',
+      scope: SCOPES,
+    }),
+  })
+}
+
+export const REDIRECT_URI = 'http://localhost:3000/api/auth/callback/microsoft'
+export const SCOPES = 'Mail.Read Mail.Send offline_access User.Read'

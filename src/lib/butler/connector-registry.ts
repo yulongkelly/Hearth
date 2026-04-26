@@ -6,18 +6,14 @@ export interface ConnectorAction {
 }
 
 export const CONNECTOR_REGISTRY: Record<string, Record<string, ConnectorAction>> = {
-  gmail: {
-    get_inbox:  { safety_level: 'low',  toolName: 'get_inbox' },
-    read_email: { safety_level: 'low',  toolName: 'read_email' },
-    send_email: { safety_level: 'high', toolName: 'send_email' },
+  email: {
+    search: { safety_level: 'low',  toolName: 'email_search' },
+    get:    { safety_level: 'low',  toolName: 'email_get' },
+    send:   { safety_level: 'high', toolName: 'email_send' },
   },
   calendar: {
     get_events:   { safety_level: 'low',    toolName: 'get_calendar_events' },
     create_event: { safety_level: 'medium', toolName: 'create_event' },
-  },
-  email: {
-    get_inbox:  { safety_level: 'low',  toolName: 'get_email_inbox' },
-    send_email: { safety_level: 'high', toolName: 'send_email_imap' },
   },
   memory: {
     add:    { safety_level: 'low', toolName: 'memory' },
