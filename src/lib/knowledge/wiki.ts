@@ -2,6 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import type { WikiPage, WikiFrontmatter, WikiEvidence } from './types'
+import { getEmbedding, cosineSimilarity } from '@/lib/memory-retrieval'
 
 const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
 const MEMORY_DIR  = path.join(HEARTH_DIR, 'memory')
@@ -179,6 +180,45 @@ export function queryWikiAll(): WikiPage[] {
   return listWikiPages().sort((a, b) =>
     b.frontmatter.last_updated.localeCompare(a.frontmatter.last_updated)
   )
+}
+
+export async function rankWikiPages(
+  query: string,
+  pages: WikiPage[],
+  ollamaUrl: string,
+  model: string,
+  topK = 5,
+): Promise<WikiPage[]> {
+  if (pages.length === 0) return []
+
+  const now = Date.now()
+  const maxFreq = Math.max(...pages.map(p => p.frontmatter.frequency), 1)
+
+  function recencyScore(page: WikiPage): number {
+    const updated = Date.parse(page.frontmatter.last_updated)
+    if (isNaN(updated)) return 0
+    return Math.exp(-(now - updated) / (30 * 86_400_000))
+  }
+
+  let queryEmb: number[] | null = null
+  try { queryEmb = await getEmbedding(query, ollamaUrl, model) } catch {}
+
+  const scored = await Promise.all(pages.map(async (page) => {
+    let relevance = 0
+    if (queryEmb) {
+      const pageText = `${page.frontmatter.title} ${page.frontmatter.tags.join(' ')} ${page.body.slice(0, 200)}`
+      try {
+        const pageEmb = await getEmbedding(pageText, ollamaUrl, model)
+        if (pageEmb) relevance = Math.max(0, cosineSimilarity(queryEmb, pageEmb))
+      } catch {}
+    }
+    const score = relevance * 0.6
+      + (page.frontmatter.frequency / maxFreq) * 0.25
+      + recencyScore(page) * 0.15
+    return { page, score }
+  }))
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, topK).map(s => s.page)
 }
 
 export function extractTagsFromTools(toolNames: string[]): string[] {

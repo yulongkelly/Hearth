@@ -13,7 +13,7 @@ function sha256(text: string): string {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0
   let dot = 0, normA = 0, normB = 0
   for (let i = 0; i < a.length; i++) {
@@ -64,7 +64,7 @@ async function fetchEmbedding(
   }
 }
 
-async function getEmbedding(
+export async function getEmbedding(
   text: string,
   ollamaUrl: string,
   model: string,
