@@ -30,13 +30,20 @@ export const CONNECTOR_REGISTRY: Record<string, Record<string, ConnectorAction>>
     delete: { safety_level: 'high', toolName: 'http_request' },
   },
   system: {
-    merge_lists:      { safety_level: 'low', toolName: 'merge_lists' },
-    detect_conflicts: { safety_level: 'low', toolName: 'detect_conflicts' },
-    filter_events:    { safety_level: 'low', toolName: 'filter_events' },
-    summarize:        { safety_level: 'low', toolName: 'summarize' },
-    create_workflow:  { safety_level: 'low', toolName: 'create_workflow' },
-    web_search:       { safety_level: 'low', toolName: 'web_search' },
-    query_events:     { safety_level: 'low', toolName: 'query_events' },
+    merge_lists:        { safety_level: 'low',  toolName: 'merge_lists' },
+    detect_conflicts:   { safety_level: 'low',  toolName: 'detect_conflicts' },
+    filter_events:      { safety_level: 'low',  toolName: 'filter_events' },
+    summarize:          { safety_level: 'low',  toolName: 'summarize' },
+    create_workflow:    { safety_level: 'low',  toolName: 'create_workflow' },
+    web_search:         { safety_level: 'low',  toolName: 'web_search' },
+    query_events:       { safety_level: 'low',  toolName: 'query_events' },
+    generate_digest:    { safety_level: 'low',  toolName: 'generate_digest' },
+    query_capabilities: { safety_level: 'low',  toolName: 'query_capabilities' },
+    request_connection: { safety_level: 'high', toolName: 'request_connection' },
+  },
+  // Pass-through for external services whose capability is resolved at runtime
+  unknown: {
+    call: { safety_level: 'high', toolName: 'unknown_call' },
   },
 }
 
