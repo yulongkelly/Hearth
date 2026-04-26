@@ -16,6 +16,8 @@ import { WorkflowPlanEditor } from '@/components/tools/workflow-plan-editor'
 import type { ToolAccess } from '@/lib/tool-access'
 import * as ChatStore from '@/lib/chat-store'
 
+type ReactStep = { iteration: number; thought: string; tool: string; action: string; status: 'acting' | 'done'; result?: string }
+
 const STORAGE_KEY = 'hearth_conversations'
 const MODEL_KEY = 'hearth_default_model'
 const SETTINGS_KEY = 'hearth_settings'
@@ -121,6 +123,7 @@ export function ChatInterface() {
   const [ollamaError, setOllamaError] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [toolStatus, setToolStatus] = useState<string | null>(null)
+  const [reactSteps, setReactSteps] = useState<ReactStep[]>([])
   const [googleConnected, setGoogleConnected] = useState(false)
   const [pendingApprovals, setPendingApprovals] = useState<Array<{ id: string; tool: string; preview: string; risk: ToolAccess }>>([])
   const [pendingQuestions, setPendingQuestions] = useState<{ id: string; questions: ClarificationQuestion[] } | null>(null)
@@ -530,6 +533,17 @@ export function ChatInterface() {
         for (const line of lines) {
           try {
             const data = JSON.parse(line)
+            if (data.react_step) {
+              const s = data.react_step
+              if (s.phase === 'acting') {
+                setReactSteps(prev => [...prev, { iteration: s.iteration, thought: s.thought, tool: s.tool, action: s.action, status: 'acting' as const }])
+              } else if (s.phase === 'done') {
+                setReactSteps(prev => prev.map((step: ReactStep) =>
+                  step.iteration === s.iteration ? { ...step, status: 'done' as const, result: s.result } : step
+                ))
+              }
+              continue
+            }
             if (data.tool_status) {
               setToolStatus(data.tool_status)
               ChatStore.updateToolStatus(data.tool_status)
@@ -614,6 +628,7 @@ export function ChatInterface() {
             if (data.message?.content) {
               setToolStatus(null)
               ChatStore.updateToolStatus(null)
+              setReactSteps([])
               accumulated += data.message.content
               const content = accumulated
               persistStreamingContent(convoId!, content)
@@ -653,6 +668,7 @@ export function ChatInterface() {
     } finally {
       setIsStreaming(false)
       setToolStatus(null)
+      setReactSteps([])
       setPendingApprovals([])
       setPendingQuestions(null)
       abortRef.current = null
@@ -828,10 +844,30 @@ export function ChatInterface() {
                 />
               ))
             )}
-            {toolStatus && (
-              <div className="flex items-center gap-2 px-4 py-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">{toolStatus}</span>
+            {(reactSteps.length > 0 || toolStatus) && (
+              <div className="mx-4 mb-2 rounded-lg border border-border bg-card/50 px-3 py-2 flex flex-col gap-1.5">
+                {reactSteps.map((step: ReactStep) => (
+                  <div key={step.iteration} className="flex items-start gap-2 text-xs">
+                    {step.status === 'acting'
+                      ? <Loader2 className="h-3 w-3 mt-0.5 flex-shrink-0 animate-spin text-muted-foreground" />
+                      : <span className="h-3 w-3 mt-0.5 flex-shrink-0 leading-none text-green-500">✓</span>
+                    }
+                    <div className="min-w-0">
+                      <span className="text-muted-foreground">
+                        Step {step.iteration + 1} · <span className="font-mono">{step.tool}.{step.action}</span>
+                      </span>
+                      {step.thought && (
+                        <p className="text-muted-foreground/70 truncate">{step.thought.slice(0, 80)}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {toolStatus && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin" />
+                    <span>{toolStatus}</span>
+                  </div>
+                )}
               </div>
             )}
             <div ref={bottomRef} />

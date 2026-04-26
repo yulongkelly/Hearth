@@ -22,9 +22,9 @@ export interface TaskPlan {
 const PLANNER_SYSTEM = `You are a planning engine for a local AI assistant. Given the user's request and conversation context, output ONLY a valid JSON object — no markdown fences, no explanation, just the JSON.
 
 Available connectors and actions:
-- gmail: get_inbox(maxResults?, query?), read_email(id), send_email(to, subject, body) — send requires approval
+- gmail: get_inbox(maxResults?, query?, account?), read_email(id), send_email(to, subject, body) — send requires approval
 - calendar: get_events(days?, maxResults?), create_event(title, start, end, description?) — create requires approval
-- email: get_inbox(days?, limit?), send_email(to, subject, body) — IMAP/SMTP; send requires approval
+- email: get_inbox(maxResults?, query?), send_email(to, subject, body) — IMAP/SMTP; send requires approval
 - memory: add(content), search(query), remove(id)
 - http: get(url, headers?), post(url, body, headers?), delete(url, headers?) — post/delete require approval
 - system: merge_lists(lists), detect_conflicts(events), filter_events(events, criteria), summarize(data, instruction), web_search(query), query_events(query?, days?), create_workflow(name, description, icon, goal, steps)
@@ -56,7 +56,7 @@ Rules:
 - reference a prior task's result in args as the string "$t1" (the task's id)
 - for pure conversation with no connector actions needed: output {"tasks": [], "response": "..."}
 - response must always be present and non-empty — it is shown to the user. Write it as a clean, user-facing sentence as if no tools exist. Never mention tool names, connector names, action names, errors, retries, or self-corrections. If tasks are queued, describe the goal in plain English (e.g. "I'll check your inbox for receipts and pull out the spending details"). If no tasks are needed, answer directly.
-- Spending/purchase queries in email: plan gmail.get_inbox(query="receipt OR order OR purchase") → gmail.read_email($t1_id) → content.detect_receipt($t2_body) → content.parse_receipt($t3_text) with appropriate depends_on chains
+- When searching email for specific content (spending, subscriptions, topics, senders): use gmail.get_inbox(maxResults=20, query="<terms>") or email.get_inbox(maxResults=20, query="<terms>"). Use Gmail search syntax for the query (e.g. category:purchases OR subject:(subscription OR renewal OR cancellation OR invoice)) — it is automatically compiled for other providers. Always include email subject and a Gmail link https://mail.google.com/mail/u/0/#all/<id> in the response so the user can verify each item. For subscription queries also extract and show the date.
 - create_workflow requires fully specified details: name, description, goal, exact steps, schedule/trigger, and target. IMPORTANT: only apply this rule if the capability check above does NOT block the request. If the user's request is vague or any required detail is missing or ambiguous, output {"tasks":[], "response":"<one specific clarifying question>"} — do NOT plan a create_workflow until all details are confirmed. Ask about the most critical missing detail first (e.g. what exactly should be done, when/how often, which account or target).
 - output ONLY the JSON object, no other text`
 

@@ -75,7 +75,7 @@ const SYSTEM_MESSAGE = `You are a knowledgeable, direct assistant. Think through
 
 IMPORTANT: Your tools (Gmail, Calendar, workflows) are for fetching live data or automating tasks — not for answering conceptual or advisory questions. If the user asks "how do I do X", answer from knowledge. Only reach for tools when the user needs real-time data (e.g. "what's in my inbox") or wants to automate something specific.
 
-You have access to the user's Gmail and Google Calendar. When the user asks about their actual email or calendar events, call the appropriate tool to fetch real data.
+You have access to the user's Gmail and Google Calendar. When the user asks about their actual email or calendar events, call the appropriate tool to fetch real data. When presenting email search results, always include each email's subject line and (for Gmail) a direct link https://mail.google.com/mail/u/0/#all/<message_id> so the user can open and verify the email. Message IDs are provided in tool results — never omit subjects or links for email summaries.
 
 You can propose reusable workflow automations using create_workflow. Workflow steps MUST use ONLY these exact names: get_calendar_events, get_inbox, read_email, http_request, merge_lists, detect_conflicts, filter_events, summarize. IMPORTANT: create_workflow only shows a preview for the user to review and confirm — it does NOT save anything. After calling it, tell the user "Here's the workflow plan for your review — save it from the preview card to add it to your sidebar."
 
@@ -291,6 +291,8 @@ export async function POST(req: NextRequest) {
         const reactResult = await reactStep(baseMessages, accumulated, adapter, model)
         if (reactResult.action === null) break
 
+        writeLine({ react_step: { iteration, phase: 'acting', thought: reactResult.thought, tool: reactResult.action.tool, action: reactResult.action.action } })
+
         const singlePlan: TaskPlan = { tasks: [reactResult.action], response: '' }
         const validation = validatePlan(singlePlan)
         if (!validation.ok) break
@@ -301,6 +303,8 @@ export async function POST(req: NextRequest) {
         const result = taskResults.get(reactResult.action.id) ?? '(no result)'
         accumulated.push({ thought: reactResult.thought, task: reactResult.action, result })
         allTaskResults.set(`${reactResult.action.tool}.${reactResult.action.action}`, result)
+
+        writeLine({ react_step: { iteration, phase: 'done', result: result.slice(0, 200) } })
       }
 
       const toolHistoryMsgs: ChatMessage[] = accumulated.flatMap(s => [

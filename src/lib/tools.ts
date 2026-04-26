@@ -1,8 +1,10 @@
+import path from 'path'
+import os from 'os'
 import { executeContentTool } from '@/lib/content-tools'
 import { queryCapabilities, formatCapabilitySpec } from '@/lib/capability-layer'
 import { loadConnections } from '@/lib/custom-connection-store'
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
-
+import { readEncrypted } from '@/lib/secure-storage'
 import { listEvents, searchEvents } from '@/lib/event-store'
 import type { HearthEvent } from '@/lib/event-store'
 import { get as getAdapter, getConnected } from '@/lib/platform-registry'
@@ -125,13 +127,17 @@ const GOOGLE_TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'get_inbox',
-      description: 'List recent emails from the Gmail inbox. Returns sender, subject, snippet, and message id for each email. When multiple accounts are connected, omit account to check all of them.',
+      description: 'List or search emails from Gmail. Returns sender, subject, snippet, and message id for each email. When multiple accounts are connected, omit account to check all of them.',
       parameters: {
         type: 'object',
         properties: {
           maxResults: {
             type: 'number',
             description: 'Number of emails to return per account. Default 10, max 20.',
+          },
+          query: {
+            type: 'string',
+            description: 'Gmail search query (supports full Gmail syntax: category:purchases, from:, subject:, after:, OR, etc.). When set, searches all mail instead of just the inbox.',
           },
           account: {
             type: 'string',
@@ -402,12 +408,15 @@ function accountLabel(email: string): string {
 
 // ─── Executors ────────────────────────────────────────────────────────────────
 
-async function fetchInboxForAccount(email: string, max: number, multiAccount: boolean): Promise<string> {
+async function fetchInboxForAccount(email: string, max: number, multiAccount: boolean, query?: string): Promise<string> {
   const token = await getValidAccessTokenForAccount(email)
   if (!token) return `Error: could not authenticate ${email}`
 
+  const qs = query
+    ? `maxResults=${max}&q=${encodeURIComponent(query)}`
+    : `maxResults=${max}&labelIds=INBOX`
   const listRes = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}&labelIds=INBOX`,
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${qs}`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
   if (!listRes.ok) return `Error: Gmail API returned ${listRes.status} for ${email}`
@@ -440,8 +449,9 @@ async function execGetInbox(args: Record<string, unknown>): Promise<string> {
   }
 
   const max = Math.min(Number(args.maxResults) || 10, 20)
+  const query = args.query ? String(args.query) : undefined
   const multiAccount = emails.length > 1
-  const results = await Promise.all(emails.map(e => fetchInboxForAccount(e, max, multiAccount)))
+  const results = await Promise.all(emails.map(e => fetchInboxForAccount(e, max, multiAccount, query)))
   return results.join('\n\n===\n\n')
 }
 
@@ -694,6 +704,101 @@ async function execHttpRequest(args: Record<string, unknown>): Promise<string> {
   return text.length > 4000 ? text.slice(0, 4000) + '\n…(truncated)' : text
 }
 
+// ─── IMAP get_email_inbox ─────────────────────────────────────────────────────
+
+// Compile a Gmail-style query string to an ImapFlow SearchObject.
+// Handles: category:purchases expansion, from:/after:/before: operators,
+// subject:(...) flattening, OR terms, and strips unsupported Gmail operators.
+export function compileQueryToImap(query: string): object {
+  let q = query
+    // Expand Gmail purchase category to universal keywords
+    .replace(/\bcategory:purchases?\b/gi, 'receipt OR invoice OR order')
+    // Strip unsupported Gmail-only operators (has:, label:, is:, in:, category:)
+    .replace(/\b(?:has|label|is|in|category):\S+/gi, '')
+
+  const fromMatch = q.match(/\bfrom:(\S+)/i)
+  const fromVal   = fromMatch?.[1]
+  if (fromMatch) q = q.replace(fromMatch[0], '')
+
+  const afterMatch = q.match(/\bafter:(\d{4}\/\d{2}\/\d{2})/i)
+  const afterVal   = afterMatch?.[1]
+  if (afterMatch) q = q.replace(afterMatch[0], '')
+
+  const beforeMatch = q.match(/\bbefore:(\d{4}\/\d{2}\/\d{2})/i)
+  const beforeVal   = beforeMatch?.[1]
+  if (beforeMatch) q = q.replace(beforeMatch[0], '')
+
+  // Unwrap subject:(...) and subject:word to plain terms
+  q = q.replace(/\bsubject:\(([^)]+)\)/gi, '$1').replace(/\bsubject:(\S+)/gi, '$1')
+
+  const terms = q.split(/ OR /i).map(t => t.trim().replace(/[()'"]/g, '')).filter(Boolean)
+
+  const base: Record<string, unknown> = {}
+  if (fromVal)  base.from   = fromVal
+  if (afterVal) base.since  = new Date(afterVal.replace(/\//g, '-'))
+  if (beforeVal) base.before = new Date(beforeVal.replace(/\//g, '-'))
+
+  if (terms.length === 0) return base
+  if (terms.length === 1) return { ...base, text: terms[0] }
+  return { ...base, or: terms.map(t => ({ text: t })) as [object, object, ...object[]] }
+}
+
+async function execGetEmailInbox(args: Record<string, unknown>): Promise<string> {
+  const HEARTH_DIR = path.join(os.homedir(), '.hearth')
+  const cfg = readEncrypted<{ email: string; password: string }>(path.join(HEARTH_DIR, 'email-config.json'))
+  if (!cfg) return 'Error: IMAP email not configured. Connect an email account on the integrations page.'
+
+  const max = Math.min(Number(args.maxResults) || 10, 20)
+  const queryStr = args.query ? String(args.query) : undefined
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ImapFlow } = require('imapflow') as typeof import('imapflow')
+  const provider = (() => {
+    const domain = cfg.email.split('@')[1]?.toLowerCase() ?? ''
+    const MAP: Record<string, [string, number]> = {
+      'gmail.com': ['imap.gmail.com', 993], 'googlemail.com': ['imap.gmail.com', 993],
+      'outlook.com': ['outlook.office365.com', 993], 'hotmail.com': ['outlook.office365.com', 993],
+      'live.com': ['outlook.office365.com', 993], 'yahoo.com': ['imap.mail.yahoo.com', 993],
+      'icloud.com': ['imap.mail.me.com', 993], 'me.com': ['imap.mail.me.com', 993],
+    }
+    return MAP[domain] ?? [`imap.${domain}`, 993] as [string, number]
+  })()
+
+  const client = new ImapFlow({
+    host: provider[0], port: provider[1], secure: true,
+    auth: { user: cfg.email, pass: cfg.password }, logger: false,
+  })
+
+  try {
+    await client.connect()
+    const lock = await client.getMailboxLock('INBOX')
+    const msgs: string[] = []
+    try {
+      let fetchRange = `1:${max}`
+      if (queryStr) {
+        const criteria = compileQueryToImap(queryStr)
+        const found = await client.search(criteria as Parameters<typeof client.search>[0])
+        const foundList = Array.isArray(found) ? found : []
+        if (!foundList.length) { lock.release(); await client.logout(); return 'No matching emails found.' }
+        fetchRange = foundList.slice(-max).join(',')
+      }
+      for await (const msg of client.fetch(fetchRange, { envelope: true })) {
+        const from    = msg.envelope?.from?.[0]?.address ?? 'unknown'
+        const subject = msg.envelope?.subject ?? '(no subject)'
+        const date    = (msg.envelope?.date ?? new Date()).toISOString().slice(0, 10)
+        msgs.push(`Account: ${cfg.email}\nID: ${msg.uid}\nFrom: ${from}\nSubject: ${subject}\nDate: ${date}`)
+        if (msgs.length >= max) break
+      }
+    } finally {
+      lock.release()
+    }
+    await client.logout()
+    return msgs.length ? msgs.join('\n\n---\n\n') : 'No messages found in inbox.'
+  } catch (err) {
+    return `Error: IMAP fetch failed — ${err instanceof Error ? err.message : 'unknown error'}`
+  }
+}
+
 // ─── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function executeTool(name: string, rawArgs: unknown): Promise<string> {
@@ -701,6 +806,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
   try {
     switch (name) {
       case 'get_inbox':             return await execGetInbox(args)
+      case 'get_email_inbox':       return await execGetEmailInbox(args)
       case 'read_email':            return await execReadEmail(args)
       case 'send_email':            return await execSendEmail(args)
       case 'get_calendar_events':   return await execGetCalendarEvents(args)
