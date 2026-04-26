@@ -857,7 +857,7 @@ export function ChatInterface() {
                         Step {step.iteration + 1} · <span className="font-mono">{step.tool}.{step.action}</span>
                       </span>
                       {step.thought && (
-                        <p className="text-muted-foreground/70 truncate">{step.thought.slice(0, 80)}</p>
+                        <p className="text-muted-foreground/70 line-clamp-3 whitespace-pre-wrap">{step.thought}</p>
                       )}
                     </div>
                   </div>
