@@ -1,3 +1,4 @@
+import { executeContentTool } from '@/lib/content-tools'
 import { queryCapabilities, formatCapabilitySpec } from '@/lib/capability-layer'
 import { loadConnections } from '@/lib/custom-connection-store'
 import { getValidAccessTokenForAccount, isConfigured, listAccounts, loadTokens } from '@/lib/google-auth'
@@ -707,6 +708,16 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'query_capabilities':    return execQueryCapabilities(args)
       case 'web_search':            return await execWebSearch(args)
       case 'http_request':          return await execHttpRequest(args)
+      case 'content_parse_html':
+      case 'content_extract_text':
+      case 'content_detect_receipt':
+      case 'content_detect_order':
+      case 'content_detect_subscription':
+      case 'content_classify':
+      case 'content_extract_structured':
+      case 'content_parse_receipt':
+      case 'content_parse_travel':
+      case 'content_parse_email_to_event': return await executeContentTool(name, args)
       default:                      return `Error: unknown tool "${name}"`
     }
   } catch {

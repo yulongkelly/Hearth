@@ -41,6 +41,18 @@ export const CONNECTOR_REGISTRY: Record<string, Record<string, ConnectorAction>>
     query_capabilities: { safety_level: 'low',  toolName: 'query_capabilities' },
     request_connection: { safety_level: 'high', toolName: 'request_connection' },
   },
+  content: {
+    parse_html:           { safety_level: 'low', toolName: 'content_parse_html' },
+    extract_text:         { safety_level: 'low', toolName: 'content_extract_text' },
+    detect_receipt:       { safety_level: 'low', toolName: 'content_detect_receipt' },
+    detect_order:         { safety_level: 'low', toolName: 'content_detect_order' },
+    detect_subscription:  { safety_level: 'low', toolName: 'content_detect_subscription' },
+    classify:             { safety_level: 'low', toolName: 'content_classify' },
+    extract_structured:   { safety_level: 'low', toolName: 'content_extract_structured' },
+    parse_receipt:        { safety_level: 'low', toolName: 'content_parse_receipt' },
+    parse_travel:         { safety_level: 'low', toolName: 'content_parse_travel' },
+    parse_email_to_event: { safety_level: 'low', toolName: 'content_parse_email_to_event' },
+  },
   // Pass-through for external services whose capability is resolved at runtime
   unknown: {
     call: { safety_level: 'high', toolName: 'unknown_call' },
