@@ -9,6 +9,14 @@ export function validatePlan(plan: TaskPlan): ValidationResult {
   const ids = new Set(plan.tasks.map(t => t.id))
 
   for (const task of plan.tasks) {
+    // 0. Forbidden fields — reject LLM output injection patterns
+    const forbidden = ['artifact', 'actions'] as const
+    for (const field of forbidden) {
+      if (field in (task as object)) {
+        return { ok: false, error: `Task "${task.id}" contains forbidden field "${field}"` }
+      }
+    }
+
     // 1. connector.action must exist in registry
     const action = lookupAction(task.tool, task.action)
     if (!action) {

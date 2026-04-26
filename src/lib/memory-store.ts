@@ -3,6 +3,7 @@ import os from 'os'
 import { readEncryptedText, writeEncryptedText } from './secure-storage'
 import { validateMemoryEntry } from './memory-validator'
 import { isSemanticDuplicate } from './memory-retrieval'
+import { INJECTION_PATTERNS, INVISIBLE_UNICODE } from './security-runtime'
 
 const HEARTH_DIR  = path.join(os.homedir(), '.hearth')
 const MEMORY_DIR  = path.join(HEARTH_DIR, 'memory')
@@ -13,15 +14,6 @@ const DELIMITER   = '\n§\n'
 export type MemoryTarget = 'memory' | 'user'
 
 // ─── Injection / exfiltration security scan ──────────────────────────────────
-
-const INJECTION_PATTERNS = [
-  /ignore\s+previous\s+instructions/i,
-  /act\s+as\s+if/i,
-  /disregard\s+(all|your|the)/i,
-  /curl[^|]*Authorization/i,
-  /wget[^|]*token/i,
-]
-const INVISIBLE_UNICODE = /[​‌‪-‮]/
 
 function scanContent(content: string): string | null {
   if (INVISIBLE_UNICODE.test(content)) return 'Error: content contains disallowed unicode characters.'
