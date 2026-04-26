@@ -31,6 +31,11 @@ Signal types and when to use them:
   → domain="goals", metadata={"declared":true}
 - progress: completion event, milestone ("I finished X", "finally got Y working", "done with Z")
   → domain="progress"
+- pattern: for spending habits, use domain="spending"
+  → Extract from: financial tool results — platform name, category, approximate amount
+  → metadata: {"platform":"<name>","category":"<category>"}
+  → Example value: "Subscribes to Netflix (~$15/mo, entertainment)"
+  → NEVER extract account numbers, card numbers, or routing numbers
 
 Rules:
 - Only extract clear, explicit, or strongly implied signals. If nothing warrants extraction, return [].
@@ -53,7 +58,7 @@ function buildExtractionPrompt(
   // Only sender names and subjects — cap at 500 chars total, never full bodies
   const emailSnippets: string[] = []
   for (const [key, val] of toolResults) {
-    if (key.includes('inbox') || key.includes('email')) {
+    if (/gmail|inbox|email/i.test(key)) {
       // Extract sender-like lines (From:, sender, name fields) only
       const senderLines = val
         .split('\n')
@@ -65,10 +70,23 @@ function buildExtractionPrompt(
     }
   }
 
+  const financeSnippets: string[] = []
+  for (const [key, val] of toolResults) {
+    if (/expense|transaction|spend|finance|plaid/i.test(key)) {
+      const lines = val.split('\n')
+        .filter(l => /"name"|"merchant"|"category"|"amount"|"price"|"platform"/i.test(l))
+        .slice(0, 15)
+        .join('\n')
+        .slice(0, 800)
+      if (lines) financeSnippets.push(`Financial data (platforms/categories/amounts only):\n${lines}`)
+    }
+  }
+
   const parts: string[] = []
   if (userLines) parts.push(`User messages:\n${userLines}`)
   if (toolNames) parts.push(`Tool calls made: ${toolNames}`)
   if (emailSnippets.length > 0) parts.push(emailSnippets.join('\n'))
+  if (financeSnippets.length > 0) parts.push(financeSnippets.join('\n'))
   return parts.join('\n\n')
 }
 

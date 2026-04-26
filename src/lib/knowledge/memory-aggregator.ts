@@ -1,6 +1,6 @@
 import type { PreferenceSignal, KnowledgeCluster } from './types'
 
-export const MIN_FREQUENCY  = 3
+export const MIN_FREQUENCY  = 1
 // Read at call time so tests that set HEARTH_TEST_MODE=1 before importing still work
 // (ESM static imports are hoisted before module-level env assignments)
 export function getMinSpanHours(): number {
@@ -74,6 +74,7 @@ function groupByPerson(signals: PreferenceSignal[]): Map<string, PreferenceSigna
 }
 
 function meetsThreshold(cluster: KnowledgeCluster): boolean {
+  if (cluster.frequency === 1) return true
   return cluster.frequency >= MIN_FREQUENCY && cluster.spanHours >= getMinSpanHours()
 }
 
