@@ -26,17 +26,18 @@ graph TB
 
     subgraph Server["Next.js API Routes (localhost:3000)"]
         direction TB
-        ChatRoute["/api/chat\nPhase 1: LLM → Task IR\nPhase 2: Deterministic Executor\nMemory injection · approval gate"]
+        ChatRoute["/api/chat\nPhase 1: LLM → Task IR\nPhase 2: Deterministic Executor\nMemory injection · approval gate\nKnowledge pipeline (fire-and-forget)"]
         ToolExec["/api/tools/execute\nRuns connector actions\n(Gmail, Calendar, HTTP)"]
         ActionExec["/api/tools/action\nRuns in-process actions\n(merge_lists, detect_conflicts,\nfilter_events, summarize→Ollama)"]
         AuthRoutes["/api/auth/*\nOAuth callback\nToken exchange"]
         MemRoute["/api/memory\nRead / write memory files"]
         ApproveRoutes["/api/tools/approve\n/api/tools/answers\nGate resolution"]
+        KnowledgeRoute["/api/knowledge\nTag-based wiki query\n/api/knowledge/wiki CRUD"]
     end
 
     subgraph LocalMachine["Local Machine"]
         Ollama["Ollama  localhost:11434\nLlama 3.2 · Qwen 2.5\nMistral · DeepSeek R1 …"]
-        FS["~/.hearth/\n├── google-credentials.json\n├── google-accounts.json\n├── email-config.json\n├── custom-connections.json\n└── memory/"]
+        FS["~/.hearth/\n├── google-credentials.json\n├── google-accounts.json\n├── email-config.json\n├── custom-connections.json\n└── memory/\n    ├── hearth.md\n    ├── memory.txt / user.txt\n    ├── signals.jsonl\n    └── wiki/"]
         Adapters["Model Adapters (ModelAdapter)\nOllama · OpenAI-compat\nUnified chat() + streamChat()"]
     end
 
@@ -51,6 +52,7 @@ graph TB
     Pages -->|"fetch"| ToolExec
     Pages -->|"fetch"| ActionExec
     Pages -->|"fetch"| MemRoute
+    Pages -->|"fetch"| KnowledgeRoute
     Pages -->|"localStorage R/W"| LS
     Pages <-->|"subscribe / emit"| GS
 
@@ -66,7 +68,8 @@ graph TB
     AuthRoutes -->|"store tokens"| FS
     ToolExec -->|"read tokens"| FS
     MemRoute -->|"R/W"| FS
-    ChatRoute -->|"inject memory into system prompt"| FS
+    ChatRoute -->|"inject memory + wiki into system prompt"| FS
+    KnowledgeRoute -->|"R/W wiki pages"| FS
 
     ChatRoute -->|"getModelAdapter()"| Adapters
     Adapters -->|"forward"| Ollama
@@ -88,12 +91,19 @@ graph TB
 🧠  BUTLER LAYER  — Unified Brain
     Intent → LLM (plan only) → Task IR → Validator → Executor
     Single decision point: planning, validation, policy enforcement
+    Reads from Knowledge Wiki (does not own it)
 
         ↓ call connector / ↑ data
 
 🔧  CONNECTOR LAYER  — Tools & Data Sources
     Gmail · Calendar · Email · Memory · HTTP · System
     No personality, no dialogue — called only by Executor
+
+        ↓ post-execution signals / ↑ wiki pages
+
+🧠  KNOWLEDGE LAYER  — User Model
+    Observation Extractor → Signal Store → Aggregator → Policy Engine → Wiki
+    Independent of butler. Butler reads; butler does not write.
 ```
 
 ---
@@ -161,11 +171,15 @@ Changed to two phases:
 **Phase 1: Planning (LLM participates)**
 ```
 User input
-  → load memory
+  → load memory (hearth.md + user.txt + top-5 semantic from memory.txt)
   → LLM generates complete TaskPlan (one shot)
   → Validator: schema + deps + connector registry check
   → if invalid: retry LLM (max 2x), then return error to user
-  → if valid: proceed to Phase 2
+  → Plan Judge (LLM-as-judge, soft gate):
+      → does the plan match the user's original request?
+      → reject on scope drift or unexpected exfiltration destination
+      → fails open if judge unavailable
+  → if approved: proceed to Phase 2
 ```
 
 **Phase 2: Execution (Deterministic — no LLM)**
@@ -175,12 +189,40 @@ TaskPlan
   → for each task:
       → enforcePolicy(task.safety_level)
       → if high: emit pending_approval, wait for user
+      → resolve $ref args from prior task results
+      → enforceSecurityPolicy() — hard gate:
+          → capability check (connector + action must be registered)
+          → path traversal guard (all string args)
+          → artifact injection guard ("actions": embedded in strings)
+          → memory injection check (memory.add content)
+          → outbound injection guard (send_email / http.post / http.delete bodies)
+          → http connection requirement (named connection, no bare URLs)
+          → invisible unicode sanitization
+      → if blocked: emit blocked step, skip execution
       → execute: type=tool   → /api/tools/execute
                  type=action → /api/tools/action
       → store result in task context
       → emit execution_step event to UI
-  → streamFinal() with all results
+  → emitToolHistory()
+  → [fire-and-forget] Knowledge pipeline (see below)
+  → [synchronous] queryWiki(task tool names) → inject <user_preferences> into synthesis prompt
+  → streamFinal()
   → flushMemoryQueue()
+```
+
+**Knowledge pipeline (fire-and-forget, does not block synthesis):**
+```
+extractObservations(messages, taskResults) → PreferenceSignal[]
+  → appendSignal() each signal to ~/.hearth/memory/signals.jsonl (encrypted)
+  → if signals extracted:
+      → aggregateSignals(readSignalsSince(90d))
+          → group by primary tag
+          → filter: frequency ≥ 3 AND span ≥ 24h
+          → compute confidence = frequency / (frequency + 2)
+      → for each cluster above threshold:
+          → evaluateCluster() → write / merge / ignore
+          → if not ignore: synthesizeCluster() via LLM (15s timeout)
+          → executeDecision() → scanWikiContent() → writeWikiPage()
 ```
 
 **Result: LLM is the advisor. You are the executor.**
@@ -270,6 +312,205 @@ connectors = [
 
 ---
 
+## Knowledge Memory System
+
+The knowledge layer runs independently of the butler. Butler reads from it; it is populated by a separate pipeline that runs after execution. The LLM never writes directly to knowledge — it only supplies raw signals that a deterministic aggregator evaluates against a policy.
+
+### Three-Layer Memory Model
+
+```
+┌─────────────────────┬────────────────────────────────────────────────────────┐
+│ Runtime State       │ TaskPlan, ExecutionStep, taskResults — owned by        │
+│                     │ plan-executor; discarded after response                │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Session Memory      │ tool_history hidden messages in localStorage —         │
+│                     │ compressed context across turns; pruned to last 10     │
+├─────────────────────┼────────────────────────────────────────────────────────┤
+│ Knowledge Memory    │ ~/.hearth/memory/wiki/*.md — markdown wiki pages;      │
+│                     │ user-editable; queried by tag before each synthesis    │
+└─────────────────────┴────────────────────────────────────────────────────────┘
+```
+
+### Signal Taxonomy
+
+```
+preference   — communication style, format choices, tool preferences
+fact         — objective facts (job, location, name)
+pattern      — recurring behavior across sessions
+relationship — person the user interacts with (domain: people)
+               metadata: { person, sentiment }
+concern      — worry or stress (domain: wellbeing)
+identity     — value or self-perception (domain: values)
+learning     — topic being studied (domain: learning)
+goal         — explicit target (domain: goals, metadata: { declared: true })
+progress     — completion event or milestone (domain: progress)
+```
+
+### Signal → Wiki Pipeline
+
+```
+Post-execution (fire-and-forget)
+  │
+  ├─ [1] Observation Extractor (observation-extractor.ts)
+  │       LLM call (15s timeout, fails to [])
+  │       Input:  user messages + email sender names from tool results (not bodies)
+  │       Output: PreferenceSignal[] — {type, domain, value, tags[], sessionId, metadata?}
+  │       Rule:   only explicit or strongly implied signals extracted
+  │               raw email body content never passed to extractor
+  │
+  ├─ [2] Signal Store (signal-store.ts)
+  │       ~/.hearth/memory/signals.jsonl — per-line encrypted (encryptLine)
+  │       Lazy prune: >500 lines → drop signals older than 90 days
+  │
+  ├─ [3] Memory Aggregator (memory-aggregator.ts)  ← deterministic, no LLM
+  │       Relationship signals: group by metadata.person first → entity cluster per person
+  │       All others: group by primary tag (tags[0] ?? domain)
+  │       Repetition threshold: frequency ≥ 3 AND span > 24h
+  │       Confidence: frequency / (frequency + 2)
+  │       Computes: week_counts (ISO week → count), trajectory (improving/declining/stable)
+  │       Output: KnowledgeCluster[] sorted by confidence desc
+  │
+  ├─ [4] Memory Policy Engine (memory-policy.ts)
+  │       evaluateCluster():
+  │         person entity  → match by entity_type=person + personName → MERGE or WRITE
+  │         goal entity    → match by entity_type=goal + tag          → MERGE or WRITE
+  │         other          → match by primary tag                     → MERGE or WRITE
+  │         confidence < 0.1 → IGNORE
+  │       synthesizeCluster() — LLM uses entity-type-specific prompt (15s timeout)
+  │       scanWikiContent() — injection pattern check before any write
+  │       executeDecision() → writeWikiPage() → rebuildIndex()
+  │
+  └─ [5] Wiki (wiki.ts)
+          ~/.hearth/memory/wiki/<slug>.md — plain UTF-8, mode 0600
+          ~/.hearth/memory/wiki/index.md  — human-readable directory
+          Atomic writes: .tmp + rename
+          Queries: queryWiki(tags), queryWikiByEntityType(type), queryWikiAll()
+          Person pages: person-<name>.md  |  Goal pages: goal-<slug>.md
+```
+
+### Weekly Digest Pipeline
+
+```
+Trigger: scheduled workflow (cron 0 21 * * 0) → system.generate_digest task
+  │
+  ├─ [1] readSignalsSince(7d)     — raw signal counts for the week
+  ├─ [2] queryWikiAll()           — all wiki pages (people, goals, concerns, topics)
+  ├─ [3] LLM synthesis (30s timeout)
+  │       Relationship section:   people with activity this week + trend
+  │       Noticing section:       concern/identity themes
+  │       Progress section:       goals with new evidence
+  │       Suggestion:             one actionable observation
+  ├─ [4] writePendingDigest()     → ~/.hearth/memory/digest-pending.md (plain UTF-8)
+  │
+  └─ [5] App load → GET /api/knowledge/digest/pending
+          → inject as read-only assistant message in chat UI
+          → DELETE /api/knowledge/digest/pending when dismissed
+```
+
+### Wiki Page Format
+
+Preference page:
+```markdown
+---
+id: communication-style
+title: Communication Style
+tags: [communication, format]
+confidence: 0.92
+frequency: 6
+last_updated: 2026-04-25
+source: inferred
+---
+
+Prefers concise bullet-point lists over prose. Consistently observed
+across email, summary, and document tasks.
+
+## Evidence
+- 2026-04-20: "make it short" (email)
+- 2026-04-22: "bullet points please" (summary)
+- 2026-04-24: "keep it brief" (calendar)
+```
+
+Person entity page:
+```markdown
+---
+id: person-alice-chen
+title: Alice Chen
+tags: [person-alice-chen, people]
+confidence: 0.75
+frequency: 5
+last_updated: 2026-04-25
+source: inferred
+entity_type: person
+trajectory: improving
+week_counts: {"2026-W16":2,"2026-W17":5}
+---
+
+Likely a colleague. Frequent email contact this week around project deadlines.
+Interaction tone has been positive; topics cluster around scheduling and deliverables.
+
+## Evidence
+- 2026-04-23: "need to email Alice about the deadline" (people)
+- 2026-04-24: "Alice from: deadline reminder" (people)
+```
+
+Goal page:
+```markdown
+---
+id: goal-learn-rust
+title: Learn Rust
+tags: [goal-learn-rust, goals, learning]
+confidence: 0.60
+frequency: 4
+last_updated: 2026-04-25
+source: inferred
+entity_type: goal
+trajectory: stable
+---
+
+Working toward Rust proficiency. Progress is steady; currently focused on ownership and borrowing concepts.
+
+## Evidence
+- 2026-04-20: "I'm learning Rust" (goals)
+- 2026-04-22: "trying to understand lifetimes" (learning)
+```
+
+### Key Invariants
+
+| Invariant | Enforcement |
+|---|---|
+| LLM never writes to wiki directly | Only `executeDecision()` calls `writeWikiPage()` |
+| Repetition is computed, not interpreted | `aggregateSignals()` is pure deterministic logic |
+| No write without security scan | `scanWikiContent()` runs before every `writeWikiPage()` |
+| Wiki files remain user-editable | Plain UTF-8, no encryption — same format as hearth.md |
+| Butler reads wiki, does not own it | `queryWiki/queryWikiByEntityType/queryWikiAll` in `chat/route.ts`; all writes go through policy |
+| Confidence score is bounded and formulaic | `freq / (freq + 2)` — no LLM-assigned confidence |
+| Raw email content never persisted | Extractor receives only sender-name lines from tool results, never full bodies |
+| Goal pages always injected | `queryWikiByEntityType('goal')` loaded into every system prompt |
+
+### Wiki Retrieval at Synthesis Time
+
+```
+plan.tasks.map(t => t.tool)
+  → extractTagsFromTools()   gmail/email → "email", calendar → "calendar", http → "web"
+  → queryWiki(tags)          tag string match on frontmatter.tags (case-insensitive)
+  → if pages found:
+      inject <user_preferences> block into synthesis prompt
+      format: [Page Title] (confidence: 0.92)\n<body>
+```
+
+### API Routes (butler reads via these; does not own wiki)
+
+```
+GET  /api/knowledge?tags=email,communication    → { pages: WikiPage[] }
+GET  /api/knowledge/wiki                        → { pages: WikiPage[] }
+POST /api/knowledge/wiki                        → create manual page
+GET  /api/knowledge/wiki/[slug]                 → single page
+PUT  /api/knowledge/wiki/[slug]  {raw: string}  → user edit (validates frontmatter, 400 on bad parse)
+DEL  /api/knowledge/wiki/[slug]                 → delete + rebuild index
+```
+
+---
+
 ## Workflow
 
 Workflows are stored directly as Task IR and share the same executor as chat. No two separate systems.
@@ -309,15 +550,16 @@ v1 implements: `user_prompt` + `schedule`. `connector_event` interface reserved.
 
 ## Context Management
 
-Three tiers of memory with different lifetimes:
+### Memory Tiers
 
 ```
-┌────────────────┬──────────────────────────────────────────────────────────┐
-│ Within turn    │ task context (server RAM only, discarded after response) │
-│ Within session │ hidden messages in localStorage (pruned to last 10)      │
-│ 7-day window   │ stale conversation hidden messages stripped on load/save  │
-│ Cross-session  │ memory.txt / user.txt — distilled facts, not raw output  │
-└────────────────┴──────────────────────────────────────────────────────────┘
+┌────────────────┬──────────────────────────────────────────────────────────────┐
+│ Within turn    │ task context (server RAM only, discarded after response)     │
+│ Within session │ hidden messages in localStorage (pruned to last 10)          │
+│ 7-day window   │ stale conversation hidden messages stripped on load/save     │
+│ Cross-session  │ memory.txt / user.txt — distilled facts, not raw output      │
+│ Long-term      │ wiki/*.md — inferred preferences, user-visible and editable  │
+└────────────────┴──────────────────────────────────────────────────────────────┘
 ```
 
 ### Tool History (within-session continuity)
@@ -349,7 +591,7 @@ safeSetItem()
       still fails? log warn, continue silently
 ```
 
-### Cross-Session Memory
+### Cross-Session Memory (flat store)
 
 ```
 ~/.hearth/memory/
@@ -364,10 +606,12 @@ safeSetItem()
 system = SYSTEM_MESSAGE
        + <hearth>hearth.md</hearth>
        + <user_profile>user.txt</user_profile>
+       + <user_goals>goal wiki pages — ALWAYS injected</user_goals>
        + <memory>top-5 relevant entries</memory>
+       + [after execution] <user_preferences>tag-matched wiki pages</user_preferences>
 ```
 
-**Write pipeline:**
+**Write pipeline (flat memory):**
 ```
 memory.add(content)
   → validateMemoryEntry()   empty / multi-line / >280 chars / action not fact /
@@ -382,7 +626,7 @@ request finally block:
       remove:  removeEntry() directly
 ```
 
-**Semantic retrieval:**
+**Semantic retrieval (flat memory):**
 1. Embed last user message via `POST /api/embeddings` (5s timeout)
 2. If Ollama unavailable: LIFO fallback
 3. Cosine similarity, filter > 0.3, take top-5
@@ -440,16 +684,30 @@ User types message
       → LLM generates TaskPlan (one shot)
       → Validator: schema + deps + connector registry check
       → if invalid: retry LLM (max 2x), then return error to user
+      → Plan Judge: LLM verifies plan matches original request scope (fails open)
+      → if rejected: return error to user
 
   → /api/chat — Phase 2: Execution
       → topological sort tasks by depends_on
       → for each task:
           → enforcePolicy(task.safety_level)
           → if high: emit pending_approval → wait /api/tools/approve
+          → resolve $ref args from prior task results
+          → enforceSecurityPolicy() → if blocked: emit blocked, skip
           → type=tool   → /api/tools/execute → external API
           → type=action → /api/tools/action  → in-process
           → emit execution_step event to UI
       → emitToolHistory()
+
+  → /api/chat — Knowledge pipeline (fire-and-forget, does not block synthesis)
+      → extractObservations(messages, taskResults)
+      → appendSignal() each to signals.jsonl
+      → aggregateSignals() → clusters meeting threshold
+      → for each cluster: evaluateCluster() → synthesizeCluster() → executeDecision()
+
+  → /api/chat — Synthesis
+      → queryWiki(extractTagsFromTools(plan.tasks))
+      → if wiki pages found: append <user_preferences> to synthesis messages
       → streamFinal()
       → flushMemoryQueue() — semantic dedup → write memory.txt
       → writer.close()
@@ -478,6 +736,80 @@ User clicks Run (or schedule trigger fires)
 
 ---
 
+## Security Model
+
+Two independent layers guard against adversarial LLM output. The knowledge layer adds a third boundary specifically around memory writes.
+
+### Layer 1 — Plan Judge (semantic, soft gate)
+
+Runs once per plan, between `validatePlan` and `executePlan`. Uses the same `ModelAdapter` as the planner — no external service.
+
+```
+judgePlan(plan, originalRequest, adapter, model)
+  → LLM-as-judge prompt:
+      "Does this plan stay within the scope of the user's request?
+       Reject on scope drift, unexpected exfiltration destination,
+       or actions the user did not ask for."
+  → { approved: true } or { approved: false, reason: "..." }
+  → fails open on error (model unavailable, malformed response)
+```
+
+Catches: "user asked to check calendar, plan sends an email to external address."
+
+### Layer 2 — Security Runtime (deterministic, hard gate)
+
+Runs per-task inside the executor (`enforceSecurityPolicy` in `security-runtime.ts`). Synchronous. Cannot be bypassed by LLM output.
+
+| Check | Scope | Blocks |
+|---|---|---|
+| Capability check | All tasks | Unknown connector or action |
+| Path traversal | All string args | `../` or `..\` sequences |
+| Artifact injection | All string args | `"actions":` embedded in string (LLM plan injection) |
+| Memory injection | `memory.add` content | 5 injection patterns (ignore/act as if/disregard/curl Auth/wget token) |
+| Outbound injection | `send_email`, `http.post`, `http.delete` all string args | Same 5 injection patterns in email body, subject, HTTP payload |
+| HTTP connection guard | `http.*` | Bare LLM-supplied URLs — requires named connection |
+| Invisible unicode | All string args | U+200B–U+200F, U+202A–U+202E, U+FEFF (stripped, not blocked) |
+
+**`$ref` cross-step contamination:** resolved args pass through the same gate before dispatch, so a malicious tool result flowing into a downstream task's args is re-checked.
+
+**OUTBOUND_ACTIONS set** (`security-runtime.ts`): `gmail.send_email`, `email.send_email`, `http.post`, `http.delete` — outbound injection guard applies to all string args on these four, not just body fields.
+
+### Layer 3 — Knowledge Policy Gate
+
+Runs before every wiki write in `memory-policy.ts`. The LLM never writes to the wiki; it only supplies synthesis text that passes through this gate.
+
+```
+scanWikiContent(content)
+  → check against INJECTION_PATTERNS (same 5 patterns as Layer 2)
+  → check against INVISIBLE_UNICODE
+  → reject with error string if any match
+  → only then: writeWikiPage()
+```
+
+Additional constraints:
+- Signals are encrypted at rest (same `encryptLine` as events.jsonl)
+- Aggregator threshold (≥3 signals, ≥24h span) prevents single-shot manipulation
+- Confidence formula (`freq / (freq + 2)`) is deterministic — LLM cannot inflate it
+- `evaluateCluster()` uses tag string match, not LLM judgment, to find existing pages
+
+### Threat Coverage
+
+| Threat | Layer | Status |
+|---|---|---|
+| Prompt injection in memory | Runtime | Blocked (5 patterns) |
+| Prompt injection in outbound content | Runtime | Blocked (same patterns, outbound gate) |
+| Prompt injection in wiki synthesis | Knowledge Policy Gate | Blocked (same patterns, pre-write scan) |
+| Data exfiltration via allowed channel | Runtime + Judge | Outbound guard + scope check |
+| IR manipulation (cycles, forbidden fields) | Validator | Blocked structurally |
+| Unknown connector/action | Runtime | Blocked — capability map derived from registry |
+| Scope drift (unexpected actions) | Judge | Rejected before execution |
+| Cross-step contamination via `$ref` | Runtime | Re-checked after resolution |
+| Capability drift (new connectors) | Validator + Tests | Registry-derived test catches gaps automatically |
+| Single-turn wiki pollution | Aggregator threshold | Requires ≥3 signals spanning ≥24h |
+| LLM-inflated confidence | Aggregator formula | Confidence = freq / (freq + 2), never LLM-assigned |
+
+---
+
 ## Key Design Principles
 
 | Principle | How |
@@ -485,13 +817,18 @@ User clicks Run (or schedule trigger fires)
 | **LLM as planner only** | LLM generates TaskPlan once; no LLM inside execution loop |
 | **Strict Task IR** | All tasks validated against connector schema before execution; invalid plan = rejected |
 | **Safety-level driven policy** | `safety_level` on every action drives approval gate; no hardcoded toolName checks |
+| **Two-layer security** | Plan Judge (semantic scope) + Security Runtime (deterministic per-task gate); neither depends on the other |
+| **Three-layer knowledge security** | Knowledge Policy Gate adds a third boundary around wiki writes |
 | **Unified executor** | Chat and workflow both run through same Phase 2 executor |
 | **100% local** | Ollama on-device; no cloud LLM |
 | **Background execution** | `ChatStore` + `WorkflowRunStore` survive React unmount |
 | **Visible execution** | Every task emits `execution_step`; user always sees what AI is doing |
 | **Connector OS** | Each connector has strict schema; new connectors get policy/validation automatically |
 | **Cross-session memory** | hearth.md (static) + user.txt (always) + memory.txt (top-5 semantic) |
-| **Encrypted storage** | Credentials use AES-256-GCM via `secure-storage.ts`; key in OS keychain |
+| **Knowledge memory** | wiki/*.md — inferred from repeated behavior (≥3 signals, ≥24h); user-editable plain text |
+| **Repetition is computed** | Aggregator uses deterministic tag clustering + threshold; LLM cannot trigger a wiki write in a single turn |
+| **Knowledge independence** | Butler reads wiki via query API; all writes go through policy engine; no butler-owned knowledge state |
+| **Encrypted storage** | Credentials + memory + signals use AES-256-GCM via `secure-storage.ts`; wiki files stay plain text for user editability |
 | **Multi-account Google** | All Google calls resolve from `~/.hearth/google-accounts.json`; tokens auto-refresh |
 | **Trigger model** | `user_prompt` / `schedule` / `connector_event` defined upfront to avoid future rewrites |
 
@@ -532,11 +869,19 @@ User clicks Run (or schedule trigger fires)
 ├── email-config.json            IMAP/SMTP credentials (mode 0600)
 ├── email-messages.jsonl         Encrypted per-line message log
 ├── custom-connections.json      User-registered HTTP connections + credentials (mode 0600)
+├── events.jsonl                 Encrypted per-line tool call + workflow run log
 └── memory/
     ├── hearth.md                Static instructions — user-editable, always loaded in full
-    ├── memory.txt               Learned facts — retrieved top-5 per query
-    ├── user.txt                 User profile — always loaded, LIFO-trimmed to context budget
-    └── embeddings.json          SHA-256(entry) → float[] cache for semantic retrieval/dedup
+    ├── memory.txt               Learned facts — retrieved top-5 per query (encrypted)
+    ├── user.txt                 User profile — always loaded, LIFO-trimmed to context budget (encrypted)
+    ├── embeddings.json          SHA-256(entry) → float[] cache for semantic retrieval/dedup
+    ├── signals.jsonl            Raw preference signals — encrypted per-line, auto-pruned at 90d
+    ├── digest-pending.md        Latest weekly digest (plain UTF-8, cleared on read)
+    └── wiki/
+        ├── index.md             Human-readable directory of all wiki pages (auto-rebuilt)
+        ├── <slug>.md            Preference/pattern pages — plain UTF-8, user-editable
+        ├── person-<name>.md     Entity pages for people (inferred from email/chat)
+        └── goal-<slug>.md       Goal/learning pages — always injected into butler context
 
 localStorage (browser)
 ├── hearth_conversations         Chat history (cap: 50; stale hidden stripped after 7d)

@@ -12,7 +12,8 @@
     "dist": "npm run build && electron-builder",
     "start": "next start",
     "lint": "next lint",
-    "test:unit": "tsx --test tests/unit/**/*.test.ts"
+    "test:unit": "tsx --test tests/unit/**/*.test.ts",
+    "test:integration": "tsx --test tests/integration/**/*.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-progress": "^1.1.1",
