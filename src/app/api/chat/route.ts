@@ -6,7 +6,9 @@ import { getModelAdapter } from '@/lib/adapters/registry'
 import type { ChatMessage } from '@/lib/model-adapter'
 import { planFromMessage } from '@/lib/butler/planner'
 import { validatePlan } from '@/lib/butler/plan-validator'
+import { judgePlan } from '@/lib/butler/plan-judge'
 import { executePlan } from '@/lib/butler/plan-executor'
+import { resolveCapabilities } from '@/lib/butler/capability-resolver'
 import { readMemory, readMemoryTrimmed, readMemoryEntries, queueMemoryWrite, flushMemoryQueue } from '@/lib/memory-store'
 import type { MemoryTarget } from '@/lib/memory-store'
 import { waitForApproval } from '@/lib/approval-store'
@@ -16,6 +18,11 @@ import { compile, compileRetryPrompt } from '@/lib/workflow-compiler'
 import type { WorkflowTool } from '@/lib/workflow-tools'
 import { appendEvent } from '@/lib/event-store'
 import { OLLAMA_BASE_URL } from '@/lib/ollama'
+import { extractObservations } from '@/lib/knowledge/observation-extractor'
+import { appendSignal, readSignalsSince } from '@/lib/knowledge/signal-store'
+import { aggregateSignals } from '@/lib/knowledge/memory-aggregator'
+import { evaluateCluster, executeDecision, synthesizeCluster } from '@/lib/knowledge/memory-policy'
+import { queryWiki, queryWikiByEntityType, extractTagsFromTools } from '@/lib/knowledge/wiki'
 
 // ─── hearth.md — user-editable static instructions, always loaded ─────────────
 
@@ -62,11 +69,13 @@ const NDJSON_HEADERS = {
 
 const MAX_TOOL_ITERATIONS = 5
 
-const SYSTEM_MESSAGE = `You are a knowledgeable, direct assistant. Answer questions fully using your own knowledge first — give concrete, actionable answers like a senior engineer would. Do not say you "cannot" do something just because a tool isn't available; give your best answer from knowledge and suggest tools or next steps at the end if relevant.
+const SYSTEM_MESSAGE = `You are a knowledgeable, direct assistant. Think through problems yourself first — reason from your own knowledge and give concrete, opinionated answers like a senior engineer would. Do NOT frame your answer around what tools you have or don't have. Do NOT open with "I cannot" or list options mechanically. Just answer the question directly, then mention tools or integrations only if they genuinely add value.
 
-You also have access to the user's Gmail and Google Calendar via function tools. When the user asks about their email, inbox, or calendar events, ALWAYS call the appropriate tool to fetch real data — do not say you cannot access these services.
+IMPORTANT: Your tools (Gmail, Calendar, workflows) are for fetching live data or automating tasks — not for answering conceptual or advisory questions. If the user asks "how do I do X", answer from knowledge. Only reach for tools when the user needs real-time data (e.g. "what's in my inbox") or wants to automate something specific.
 
-You can propose reusable workflow tools using create_workflow. Before calling create_workflow you MUST call ask_clarification — do NOT write questions as plain text in the chat. ask_clarification shows a structured popup with clickable options. Ask about: which data sources (Gmail/Calendar), which accounts, what time range, and what output the user wants. After clarification, call create_workflow immediately with the workflow JSON. The workflow steps MUST use ONLY these exact names: get_calendar_events, get_inbox, read_email, http_request, merge_lists, detect_conflicts, filter_events, summarize. Do NOT invent step names. Do NOT explain — just call the tools. IMPORTANT: create_workflow only shows a preview for the user to review and confirm — it does NOT save anything. After calling it, tell the user "Here's the workflow plan for your review — save it from the preview card to add it to your sidebar."
+You have access to the user's Gmail and Google Calendar. When the user asks about their actual email or calendar events, call the appropriate tool to fetch real data.
+
+You can propose reusable workflow automations using create_workflow. Workflow steps MUST use ONLY these exact names: get_calendar_events, get_inbox, read_email, http_request, merge_lists, detect_conflicts, filter_events, summarize. IMPORTANT: create_workflow only shows a preview for the user to review and confirm — it does NOT save anything. After calling it, tell the user "Here's the workflow plan for your review — save it from the preview card to add it to your sidebar."
 
 CONNECTING NEW SERVICES: When the user wants to connect or use an external API or service you don't have built-in access to (e.g. smart home devices, custom APIs):
 1. Call ask_clarification to confirm they want to set up the connection (1 question, yes/no).
@@ -136,10 +145,19 @@ export async function POST(req: NextRequest) {
   const relevantEntries = await retrieveRelevantMemory(lastUserMsg, memoryEntries, 5, ollamaUrl, model)
   const memBlock = relevantEntries.join('\n§\n')
 
+  // Always-inject goal pages — declared goals are relevant in every session
+  const goalPages = queryWikiByEntityType('goal')
+  const goalsBlock = goalPages.length > 0
+    ? `<user_goals>\n${goalPages.map(p =>
+        `[${p.frontmatter.title}] (confidence: ${p.frontmatter.confidence})\n${p.body}`
+      ).join('\n\n')}\n</user_goals>`
+    : ''
+
   const memorySection = [
-    hearthMd  ? `<hearth>\n${hearthMd}\n</hearth>`              : '',
-    userBlock ? `<user_profile>\n${userBlock}\n</user_profile>` : '',
-    memBlock  ? `<memory>\n${memBlock}\n</memory>`              : '',
+    hearthMd   ? `<hearth>\n${hearthMd}\n</hearth>`              : '',
+    userBlock  ? `<user_profile>\n${userBlock}\n</user_profile>` : '',
+    goalsBlock ? goalsBlock                                       : '',
+    memBlock   ? `<memory>\n${memBlock}\n</memory>`              : '',
   ].filter(Boolean).join('\n\n')
 
   const todayLine = `Today's date is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Use this when computing date ranges or referencing days of the week.`
@@ -155,7 +173,7 @@ export async function POST(req: NextRequest) {
 
   async function streamFinal(msgs: ChatMessage[]) {
     try {
-      const stream = await adapter.streamChat({ model, messages: msgs })
+      const stream = await adapter.streamChat({ model, messages: msgs, think: true })
       const reader = stream.getReader()
       while (true) {
         const { done, value } = await reader.read()
@@ -176,13 +194,13 @@ export async function POST(req: NextRequest) {
       // ── Phase 1: Planning ────────────────────────────────────────────────────
       const plan = await planFromMessage(baseMessages, '', adapter, model)
 
-      // Pure conversation — no tool tasks needed; stream planner's response directly
+      // Pure conversation — planner reasoned through this (capability check, clarification, etc.)
+      // Trust its response directly. Only fall back to streamFinal if the planner gave nothing.
       if (plan.tasks.length === 0) {
         if (plan.response) {
           writeLine({ message: { role: 'assistant', content: plan.response }, done: false })
           writeLine({ message: { role: 'assistant', content: '' }, done: true })
         } else {
-          // Planner failed entirely — fall back to direct stream
           await streamFinal(baseMessages)
         }
         return
@@ -196,8 +214,21 @@ export async function POST(req: NextRequest) {
         return
       }
 
+      // ── Judge: semantic scope check ──────────────────────────────────────────
+      const originalRequest = [...(messages as ChatMessage[])]
+        .reverse().find(m => m.role === 'user')?.content ?? ''
+      const judgeResult = await judgePlan(plan, originalRequest, adapter, model)
+      if (!judgeResult.approved) {
+        writeLine({ message: { role: 'assistant', content: `I can't execute that plan: ${judgeResult.reason}` }, done: false })
+        writeLine({ message: { role: 'assistant', content: '' }, done: true })
+        return
+      }
+
+      // ── Capability resolution: investigate unknown targets per-task ──────────
+      const resolvedPlan = await resolveCapabilities(plan)
+
       // ── Phase 2: Deterministic execution ────────────────────────────────────
-      const taskResults = await executePlan(plan, {
+      const taskResults = await executePlan(resolvedPlan, {
         requireApproval: async (task) => {
           const id = crypto.randomUUID()
           writeLine({ pending_approval: { id, tool: `${task.tool}.${task.action}`, args: task.args } })
@@ -227,6 +258,31 @@ export async function POST(req: NextRequest) {
             queueMemoryWrite('memory', 'remove', memId, ollamaUrl, model)
             return 'Removed.'
           },
+          // generate_digest: synthesize and store weekly digest
+          'system.generate_digest': async () => {
+            const { generateWeeklyDigest, writePendingDigest } = await import('@/lib/knowledge/weekly-digest')
+            const digest = await generateWeeklyDigest(adapter, model)
+            writePendingDigest(digest)
+            return 'Weekly digest generated.'
+          },
+          // unknown.call: capability was resolved — emit blocked_step or pending_connection
+          'unknown.call': async (task) => {
+            const target = task.unknown_target ?? String(task.args.target ?? 'unknown service')
+            if (task.status === 'blocked') {
+              writeLine({ blocked_step: { taskId: task.id, target, reason: task.args.reason } })
+              return `Cannot connect to ${target}: ${task.args.reason}`
+            }
+            if (task.status === 'needs_connection') {
+              writeLine({ pending_connection: {
+                id: task.id,
+                target,
+                capabilitySpec: task.args.capabilitySpec,
+                searchSummary:  task.args.searchSummary,
+              }})
+              return `Connection setup required for ${target}.`
+            }
+            return `Unknown status for ${target}.`
+          },
           // create_workflow: compile and emit preview card
           'system.create_workflow': async (task) => {
             writeLine({ tool_status: 'Building workflow…' })
@@ -245,19 +301,49 @@ export async function POST(req: NextRequest) {
       })
 
       // ── Emit tool history then synthesise final response ─────────────────────
-      const resultsContext = plan.tasks
+      const resultsContext = resolvedPlan.tasks
         .map(t => `${t.tool}.${t.action}: ${taskResults.get(t.id) ?? '(no result)'}`)
         .join('\n\n')
 
       const toolHistoryMsgs: ChatMessage[] = [
         { role: 'assistant', content: `[Executed ${plan.tasks.length} task(s)]` },
-        { role: 'tool',      content: resultsContext },
+        { role: 'user',      content: `Tool results:\n${resultsContext}` },
       ]
       writeLine({ tool_history: toolHistoryMsgs })
+
+      // ── Knowledge pipeline (fire-and-forget — does not block synthesis) ───────
+      const _sessionId = crypto.randomUUID()
+      ;(async () => {
+        try {
+          const userMsgs = (messages as ChatMessage[]).filter(m => m.role === 'user' || m.role === 'assistant')
+          const signals  = await extractObservations(userMsgs, taskResults, _sessionId, adapter, model)
+          for (const sig of signals) appendSignal(sig)
+          if (signals.length > 0) {
+            const cutoff   = new Date(Date.now() - 90 * 86_400_000).toISOString()
+            const clusters = aggregateSignals(readSignalsSince(cutoff))
+            for (const cluster of clusters) {
+              const decision = evaluateCluster(cluster)
+              if (decision.action !== 'ignore') {
+                const synthesis = await synthesizeCluster(cluster, adapter, model)
+                executeDecision(decision, synthesis)
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+      })()
+
+      // ── Wiki context injection ─────────────────────────────────────────────────
+      const wikiPages = queryWiki(extractTagsFromTools(plan.tasks.map(t => t.tool)))
+      const wikiBlock = wikiPages.length > 0
+        ? `<user_preferences>\n${wikiPages.map(p =>
+            `[${p.frontmatter.title}] (confidence: ${p.frontmatter.confidence})\n${p.body}`
+          ).join('\n\n')}\n</user_preferences>`
+        : ''
 
       const synthMessages: ChatMessage[] = [
         ...baseMessages,
         ...toolHistoryMsgs,
+        ...(wikiBlock ? [{ role: 'user' as const, content: wikiBlock }] : []),
       ]
       await streamFinal(synthMessages)
 

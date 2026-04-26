@@ -1,6 +1,7 @@
 import { lookupAction } from './connector-registry'
 import type { PlanTask, TaskPlan } from './planner'
 import { executeTool } from '@/lib/tools'
+import { enforceSecurityPolicy } from '@/lib/security-runtime'
 
 export interface ExecutionStep {
   taskId:  string
@@ -87,14 +88,6 @@ export async function executePlan(
       }
     }
 
-    const registration = lookupAction(task.tool, task.action)
-    if (!registration) {
-      const err = `Unknown action: ${task.tool}.${task.action}`
-      ctx.emitStep({ taskId: task.id, tool: task.tool, action: task.action, status: 'error', result: err })
-      taskResults.set(task.id, err)
-      continue
-    }
-
     const resolvedArgs = resolveArgs(task.args, taskResults)
 
     // memory actions need an "action" sub-field
@@ -107,13 +100,30 @@ export async function executePlan(
       ? { method: task.action.toUpperCase(), ...toolArgs }
       : toolArgs
 
+    // Security runtime — capability check, arg sanitization, artifact isolation
+    const secCheck = enforceSecurityPolicy(task, finalArgs)
+    if (!secCheck.allowed) {
+      ctx.emitStep({ taskId: task.id, tool: task.tool, action: task.action, status: 'blocked', result: secCheck.reason })
+      taskResults.set(task.id, `Blocked: ${secCheck.reason}`)
+      continue
+    }
+    const approvedArgs = secCheck.task.args
+
+    const registration = lookupAction(task.tool, task.action)
+    if (!registration) {
+      const err = `Unknown action: ${task.tool}.${task.action}`
+      ctx.emitStep({ taskId: task.id, tool: task.tool, action: task.action, status: 'error', result: err })
+      taskResults.set(task.id, err)
+      continue
+    }
+
     try {
       const interceptKey = `${task.tool}.${task.action}`
       const interceptor = ctx.interceptors?.[interceptKey]
-      const resolvedTask = { ...task, args: finalArgs }
+      const resolvedTask = { ...task, args: approvedArgs }
       const raw = interceptor
         ? await interceptor(resolvedTask)
-        : await executeTool(registration.toolName, finalArgs)
+        : await executeTool(registration.toolName, approvedArgs)
       const result = String(raw)
       const trimmed = result.slice(0, 2000)
       ctx.emitStep({ taskId: task.id, tool: task.tool, action: task.action, status: 'done', result: trimmed })
