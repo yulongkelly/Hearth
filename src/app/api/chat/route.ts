@@ -307,6 +307,7 @@ export async function POST(req: NextRequest) {
         writeLine({ react_step: { iteration, phase: 'done', result: result.slice(0, 200) } })
       }
 
+      // toolHistoryMsgs: kept in original alternating format for the hidden chat history
       const toolHistoryMsgs: ChatMessage[] = accumulated.flatMap(s => [
         { role: 'assistant', content: `[Reasoning: ${s.thought}]\n${s.task.tool}.${s.task.action} ${JSON.stringify(s.task.args)}` },
         { role: 'user',      content: s.result.slice(0, 2000) },
@@ -326,9 +327,20 @@ export async function POST(req: NextRequest) {
           ).join('\n\n')}\n</user_preferences>`
         : ''
 
+      // For synthesis: collapse tool results into a single context block so the model
+      // doesn't confuse the alternating assistant/user tool-call format with its own output.
+      const toolContextMsgs: ChatMessage[] = accumulated.length > 0 ? [
+        {
+          role: 'user',
+          content: `Here are the results from the tools I ran:\n\n${accumulated.map(s =>
+            `[${s.task.tool}.${s.task.action}]\n${s.result.slice(0, 1500)}`
+          ).join('\n\n---\n\n')}\n\nNow answer the original question using these results.`,
+        },
+      ] : []
+
       const synthMessages: ChatMessage[] = [
         ...baseMessages,
-        ...toolHistoryMsgs,
+        ...toolContextMsgs,
         ...(wikiBlock ? [{ role: 'user' as const, content: wikiBlock }] : []),
       ]
       await streamFinal(synthMessages)
