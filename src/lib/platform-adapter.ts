@@ -1,4 +1,4 @@
-export const PLATFORMS = ['email'] as const
+export const PLATFORMS = ['email', 'outlook-imap', 'qq-imap'] as const
 export type PlatformName = typeof PLATFORMS[number]
 
 export type ConnectStatus = 'stopped' | 'scanning' | 'connecting' | 'connected' | 'error'

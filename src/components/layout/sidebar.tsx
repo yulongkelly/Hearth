@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   Calendar,
+  Bell,
   Cpu,
   Plug2,
   Settings,
@@ -23,11 +24,12 @@ import * as ChatStore from '@/lib/chat-store'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/chat',     icon: MessageSquare, label: 'Chat'     },
-  { href: '/calendar', icon: Calendar,     label: 'Calendar' },
-  { href: '/models',   icon: Cpu,          label: 'Models'   },
-  { href: '/integrations', icon: Plug2, label: 'Connected Apps' },
-  { href: '/memory', icon: Brain, label: 'Memory' },
+  { href: '/chat',       icon: MessageSquare, label: 'Chat'         },
+  { href: '/calendar',   icon: Calendar,      label: 'Calendar'     },
+  { href: '/reminders',  icon: Bell,          label: 'Reminders'    },
+  { href: '/models',     icon: Cpu,           label: 'Models'       },
+  { href: '/integrations', icon: Plug2,       label: 'Connected Apps' },
+  { href: '/memory',     icon: Brain,         label: 'Memory'       },
 ]
 
 const bottomItems = [
@@ -40,6 +42,7 @@ export function Sidebar() {
   const [hasTools, setHasTools]           = useState(false)
   const [hasActiveRun, setHasActiveRun]   = useState(false)
   const [chatStreaming, setChatStreaming]  = useState(false)
+  const [hasDueReminders, setHasDueReminders] = useState(false)
 
   useEffect(() => {
     setHasTools(loadUserTools().length + loadWorkflowTools().length > 0)
@@ -60,6 +63,14 @@ export function Sidebar() {
     return ChatStore.subscribe(sync)
   }, [])
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setHasDueReminders((e as CustomEvent).detail.dueCount > 0)
+    }
+    window.addEventListener('hearth:reminders-updated', handler)
+    return () => window.removeEventListener('hearth:reminders-updated', handler)
+  }, [])
+
   return (
     <TooltipProvider delayDuration={0}>
       <aside className="fixed left-0 top-0 z-40 hidden md:flex h-full w-16 flex-col border-r border-border bg-card">
@@ -74,7 +85,8 @@ export function Sidebar() {
         <nav className="flex flex-1 flex-col items-center gap-1 py-4 overflow-y-auto">
           {navItems.map(({ href, icon: Icon, label }) => {
             const isActive = pathname === href || (href !== '/' && pathname.startsWith(href))
-            const showDot  = href === '/chat' && chatStreaming && !isActive
+            const showDot  = (href === '/chat' && chatStreaming && !isActive) ||
+                             (href === '/reminders' && hasDueReminders && !isActive)
             return (
               <Tooltip key={href}>
                 <TooltipTrigger asChild>

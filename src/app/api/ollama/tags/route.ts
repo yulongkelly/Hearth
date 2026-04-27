@@ -15,8 +15,16 @@ export async function GET() {
     const data = await res.json()
     return NextResponse.json(data)
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const isTimeout = message.includes('timeout') || message.includes('abort') || message.toLowerCase().includes('timedout')
     return NextResponse.json(
-      { error: 'Cannot connect to Ollama. Is it running?' },
+      {
+        error: 'Cannot connect to Ollama',
+        detail: isTimeout
+          ? `Connection timed out after 5s`
+          : message.replace(/^.*?ECONNREFUSED.*$/, 'Connection refused — nothing is listening on that port'),
+        url: `${OLLAMA_BASE_URL}/api/tags`,
+      },
       { status: 503 }
     )
   }

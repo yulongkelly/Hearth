@@ -314,12 +314,75 @@ const REQUEST_CONNECTION_DEFINITION = {
   },
 }
 
-export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
+const REMINDER_TOOL_DEFINITIONS = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'create_reminder',
+      description: 'Create a new reminder with an optional recurrence. Use this when the user wants to be reminded about something on a specific date. For recurring tasks like bill payments, use recurrence:"monthly". Always populate sourceContext when the date was inferred from an email or other source.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text:          { type: 'string', description: 'What to remind the user about' },
+          dueDate:       { type: 'string', description: 'Due date in YYYY-MM-DD format' },
+          recurrence:    { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'], description: 'How often to repeat after completion' },
+          sourceContext: { type: 'string', description: 'Where this date came from, e.g. "found Discover payment on the 15th from email"' },
+          tags:          { type: 'array', items: { type: 'string' }, description: 'Optional labels like ["finance","bills"]' },
+        },
+        required: ['text', 'dueDate'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'list_reminders',
+      description: 'List the user\'s reminders. Use this when the user asks what reminders exist or what is coming up.',
+      parameters: {
+        type: 'object',
+        properties: {
+          includeCompleted: { type: 'boolean', description: 'Include completed reminders. Default false.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'complete_reminder',
+      description: 'Mark a reminder as done. For recurring reminders, automatically schedules the next occurrence.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The reminder id from list_reminders' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'delete_reminder',
+      description: 'Permanently delete a reminder.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The reminder id from list_reminders' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+]
+
+export const TOOL_DEFINITIONS = [...GOOGLE_TOOL_DEFINITIONS, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, MEMORY_TOOL_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION, ...REMINDER_TOOL_DEFINITIONS]
 
 // ─── Tool exposure ────────────────────────────────────────────────────────────
 
 export function getAvailableTools() {
-  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION]
+  const always  = [MEMORY_TOOL_DEFINITION, QUERY_EVENTS_DEFINITION, CREATE_WORKFLOW_DEFINITION, ASK_CLARIFICATION_DEFINITION, QUERY_CAPABILITIES_DEFINITION, WEB_SEARCH_DEFINITION, REQUEST_CONNECTION_DEFINITION, ...REMINDER_TOOL_DEFINITIONS]
   const google  = (isConfigured() && loadTokens()) ? GOOGLE_TOOL_DEFINITIONS : []
   return [...always, ...google]
 }
@@ -342,6 +405,10 @@ export function toolStatusLabel(name: string): string {
     web_search:            'Searching the web…',
     request_connection:    'Setting up connection…',
     http_request:          'Calling API…',
+    create_reminder:       'Setting reminder…',
+    list_reminders:        'Fetching reminders…',
+    complete_reminder:     'Completing reminder…',
+    delete_reminder:       'Deleting reminder…',
   }
   return labels[name] ?? 'Using a tool...'
 }
@@ -385,17 +452,76 @@ function accountLabel(email: string): string {
 
 // ─── Executors ────────────────────────────────────────────────────────────────
 
+function execEmailListAccounts(): string {
+  const adapters = EmailRouter.getAdapters()
+  if (!adapters.length) return 'No email accounts connected.'
+
+  // Group by provider
+  const byProvider = new Map<string, typeof adapters>()
+  for (const a of adapters) {
+    const list = byProvider.get(a.providerType) ?? []
+    list.push(a)
+    byProvider.set(a.providerType, list)
+  }
+
+  const lines: string[] = []
+  for (const [provider, accs] of byProvider) {
+    lines.push(`[${provider}]`)
+    for (const a of accs) {
+      const label = a.accountLabel !== a.accountEmail ? `${a.accountLabel} <${a.accountEmail}>` : a.accountEmail
+      lines.push(`  - ${label}`)
+    }
+  }
+  return lines.join('\n')
+}
+
 async function execEmailSearch(args: Record<string, unknown>): Promise<string> {
-  const account = args.account ? String(args.account) : undefined
+  const rawAccount = args.account ? String(args.account) : undefined
+  const account = rawAccount === 'null' || rawAccount === 'undefined' ? undefined : rawAccount
   const adapters = EmailRouter.getAdapters(account)
   if (!adapters.length) {
     if (account) return `Error: no account matching "${account}". Check /integrations to see connected accounts.`
     return 'Error: No email accounts configured. Connect an account on the integrations page.'
   }
-  const max   = Math.min(Number(args.maxResults) || 10, 20)
-  const query = args.query ? String(args.query) : ''
-  const msgs  = await EmailRouter.search(query, max, account)
-  return formatEmailMessages(msgs)
+  const max = Math.min(Number(args.maxResults) || 10, 20)
+
+  // Date filter: inject after:YYYY/MM/DD into every query when days is specified
+  const days = args.days ? Math.min(Math.max(Number(args.days), 1), 3650) : null
+  const afterClause = days
+    ? (() => {
+        const d = new Date(Date.now() - days * 86_400_000)
+        return `after:${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+      })()
+    : null
+
+  // Support queries[] (fan-out) with fallback to single query
+  const rawQueries: string[] = Array.isArray(args.queries) && args.queries.length > 0
+    ? args.queries.map(String).filter(Boolean)
+    : args.query ? [String(args.query)] : ['']
+  const queries = afterClause
+    ? rawQueries.map(q => q ? `${q} ${afterClause}` : afterClause)
+    : rawQueries
+
+  if (queries.length === 1) {
+    const msgs = await EmailRouter.search(queries[0], max, account)
+    return formatEmailMessages(msgs)
+  }
+
+  // Fan-out: run all queries in parallel, group results by bucket
+  const settled = await Promise.allSettled(
+    queries.map(q => EmailRouter.search(q, Math.min(max, 10), account))
+  )
+
+  const seen = new Set<string>()
+  const sections: string[] = []
+  for (let i = 0; i < queries.length; i++) {
+    const r = settled[i]
+    if (r.status === 'rejected') continue
+    const unique = r.value.filter(m => !seen.has(m.id))
+    unique.forEach(m => seen.add(m.id))
+    if (unique.length > 0) sections.push(formatEmailMessages(unique))
+  }
+  return sections.join('\n\n---\n\n')
 }
 
 async function execEmailGet(args: Record<string, unknown>): Promise<string> {
@@ -610,6 +736,7 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
   const args = parseArgs(rawArgs)
   try {
     switch (name) {
+      case 'email_list_accounts':   return execEmailListAccounts()
       case 'email_search':          return await execEmailSearch(args)
       case 'email_get':             return await execEmailGet(args)
       case 'email_send':            return await execEmailSend(args)
@@ -634,6 +761,60 @@ export async function executeTool(name: string, rawArgs: unknown): Promise<strin
       case 'content_parse_receipt':
       case 'content_parse_travel':
       case 'content_parse_email_to_event': return await executeContentTool(name, args)
+      case 'create_reminder': {
+        const { createReminder } = await import('@/lib/reminder-store')
+        const text = String(args.text ?? args.title ?? args.name ?? '').trim()
+        if (!text) return 'Error: text is required'
+
+        // Normalize date to YYYY-MM-DD — accept ISO timestamps, slash-separated, or partial dates
+        const rawDate = String(args.dueDate ?? args.date ?? args.due_date ?? args.due ?? '').trim()
+        let dueDate = ''
+        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+          dueDate = rawDate.slice(0, 10)  // strip time if present
+        } else if (/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(rawDate)) {
+          const [y, m, d] = rawDate.split('/')
+          dueDate = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+        } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(rawDate)) {
+          const [m, d, y] = rawDate.split('/')
+          dueDate = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+        } else {
+          // Last resort: let Date parse it (handles "April 21, 2026" etc.)
+          const parsed = new Date(rawDate)
+          if (!isNaN(parsed.getTime())) {
+            dueDate = parsed.toISOString().slice(0, 10)
+          }
+        }
+        if (!dueDate) return `Error: could not parse dueDate "${rawDate}" — use YYYY-MM-DD`
+
+        const r = createReminder({
+          text,
+          dueDate,
+          recurrence: args.recurrence as import('@/lib/reminder-store').Reminder['recurrence'],
+          sourceContext: args.sourceContext ? String(args.sourceContext) : undefined,
+          tags: Array.isArray(args.tags) ? args.tags.map(String) : undefined,
+        })
+        return `Reminder created: "${r.text}" due ${r.dueDate}${r.recurrence ? `, repeating ${r.recurrence}` : ''}. ID: ${r.id}`
+      }
+      case 'list_reminders': {
+        const { listReminders } = await import('@/lib/reminder-store')
+        const reminders = listReminders({ includeCompleted: Boolean(args.includeCompleted) })
+        if (!reminders.length) return 'No reminders found.'
+        return reminders.map(r =>
+          `[${r.id.slice(0, 8)}] ${r.text} — due ${r.dueDate}${r.recurrence ? ` (${r.recurrence})` : ''}${r.completedAt ? ' ✓' : ''}`
+        ).join('\n')
+      }
+      case 'complete_reminder': {
+        const { completeReminder } = await import('@/lib/reminder-store')
+        const { updated, next } = completeReminder(String(args.id ?? ''))
+        let msg = `Reminder "${updated.text}" marked complete.`
+        if (next) msg += ` Next occurrence created for ${next.dueDate}.`
+        return msg
+      }
+      case 'delete_reminder': {
+        const { deleteReminder } = await import('@/lib/reminder-store')
+        const ok = deleteReminder(String(args.id ?? ''))
+        return ok ? 'Reminder deleted.' : 'Reminder not found.'
+      }
       default:                      return `Error: unknown tool "${name}"`
     }
   } catch {

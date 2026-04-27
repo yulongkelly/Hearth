@@ -125,7 +125,7 @@ export async function executePlan(
         ? await interceptor(resolvedTask)
         : await executeTool(registration.toolName, approvedArgs)
       const result = String(raw)
-      const trimmed = result.slice(0, 2000)
+      const trimmed = result.slice(0, 4000)
       ctx.emitStep({ taskId: task.id, tool: task.tool, action: task.action, status: 'done', result: trimmed })
       taskResults.set(task.id, trimmed)
     } catch (e) {

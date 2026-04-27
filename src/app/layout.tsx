@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { Sidebar } from '@/components/layout/sidebar'
 import { MobileNav } from '@/components/layout/mobile-nav'
+import { ReminderBanner } from '@/components/reminders/reminder-banner'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -25,6 +26,7 @@ export default function RootLayout({
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className={inter.className} style={{ backgroundColor: '#0a0a0f' }}>
         <div className="flex h-screen overflow-hidden bg-background">
+          <ReminderBanner />
           {/* Desktop sidebar — hidden on mobile */}
           <Sidebar />
           <main className="flex flex-1 flex-col overflow-hidden md:ml-16 pb-16 md:pb-0">

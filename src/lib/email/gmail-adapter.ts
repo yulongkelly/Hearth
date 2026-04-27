@@ -76,6 +76,7 @@ export class GmailAdapter implements EmailAdapter {
         date: h('Date'),
         accountEmail: this.accountEmail,
         accountLabel: label,
+        webLink: `https://mail.google.com/mail/u/0/#all/${msg.id}`,
       }
     })
   }

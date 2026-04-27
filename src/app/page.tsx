@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   MessageSquare, Cpu, Plug2, ArrowRight,
-  CheckCircle2, AlertCircle, Zap, Brain
+  CheckCircle2, AlertCircle, Zap, Brain, Bell
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatBytes } from '@/lib/utils'
 import type { OllamaModel, OllamaRunningModel } from '@/lib/ollama'
+import type { Reminder } from '@/lib/reminder-store'
 
 interface StatusState {
   ollamaOnline: boolean | null
@@ -24,6 +25,7 @@ export default function DashboardPage() {
     models: [],
     running: [],
   })
+  const [reminders, setReminders] = useState<Reminder[]>([])
 
   useEffect(() => {
     async function fetchStatus() {
@@ -48,6 +50,13 @@ export default function DashboardPage() {
       }
     }
     fetchStatus()
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/reminders?includeCompleted=false&limit=3')
+      .then(r => r.ok ? r.json() : { reminders: [] })
+      .then(d => setReminders(d.reminders ?? []))
+      .catch(() => {})
   }, [])
 
   const date = new Date().toLocaleDateString('en-US', {
@@ -133,6 +142,46 @@ export default function DashboardPage() {
           </Card>
         </Link>
       </div>
+
+      {/* Upcoming reminders */}
+      {reminders.length > 0 && (() => {
+        const today = new Date().toISOString().slice(0, 10)
+        const hasOverdue = reminders.some(r => r.dueDate < today)
+        return (
+          <Card className={hasOverdue ? 'border-red-500/30 bg-red-500/5' : ''}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  {hasOverdue
+                    ? <AlertCircle className="h-4 w-4 text-red-400" />
+                    : <Bell className="h-4 w-4 text-muted-foreground" />
+                  }
+                  Upcoming Reminders
+                </span>
+                <Link href="/reminders" className="text-xs text-primary hover:underline font-normal">
+                  View all
+                </Link>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {reminders.map(r => {
+                  const overdue = r.dueDate < today
+                  const dueToday = r.dueDate === today
+                  return (
+                    <div key={r.id} className="flex items-center justify-between gap-2">
+                      <p className="text-xs truncate text-foreground">{r.text}</p>
+                      <span className={`text-xs flex-shrink-0 ${overdue ? 'text-red-400' : dueToday ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                        {r.dueDate}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* System status */}
       <div className="grid gap-4 sm:grid-cols-2">

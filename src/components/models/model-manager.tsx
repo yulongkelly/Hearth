@@ -24,6 +24,7 @@ export function ModelManager() {
   const [installedModels, setInstalledModels] = useState<OllamaModel[]>([])
   const [runningModels, setRunningModels] = useState<OllamaRunningModel[]>([])
   const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null)
+  const [ollamaError, setOllamaError] = useState<{ detail?: string; url?: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [pulling, setPulling] = useState<Record<string, PullState>>({})
   const [deleting, setDeleting] = useState<Record<string, boolean>>({})
@@ -38,6 +39,8 @@ export function ModelManager() {
       ])
 
       if (!tagsRes.ok) {
+        const errBody = await tagsRes.json().catch(() => ({}))
+        setOllamaError({ detail: errBody.detail, url: errBody.url })
         setOllamaOnline(false)
         setLoading(false)
         return
@@ -48,8 +51,10 @@ export function ModelManager() {
 
       setInstalledModels(tagsData.models || [])
       setRunningModels(psData.models || [])
+      setOllamaError(null)
       setOllamaOnline(true)
-    } catch {
+    } catch (err) {
+      setOllamaError({ detail: err instanceof Error ? err.message : undefined })
       setOllamaOnline(false)
     } finally {
       setLoading(false)
@@ -194,14 +199,29 @@ export function ModelManager() {
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <AlertCircle className="h-4 w-4 text-destructive" />
-              <div>
-                <p className="text-sm text-destructive">Cannot connect to Ollama</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Make sure Ollama is installed and running. Download from{' '}
-                  <span className="text-primary">ollama.com</span>
-                </p>
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+              <div className="space-y-1.5">
+                <p className="text-sm text-destructive font-medium">Cannot connect to Ollama</p>
+                {ollamaError?.url && (
+                  <p className="text-xs text-muted-foreground">
+                    Tried: <code className="font-mono bg-muted px-1 py-0.5 rounded">{ollamaError.url}</code>
+                  </p>
+                )}
+                {ollamaError?.detail && (
+                  <p className="text-xs text-muted-foreground">{ollamaError.detail}</p>
+                )}
+                <div className="text-xs text-muted-foreground space-y-0.5 pt-0.5">
+                  <p>Check:</p>
+                  <ul className="list-disc list-inside space-y-0.5 pl-1">
+                    <li>Ollama is running — <code className="font-mono bg-muted px-1 py-0.5 rounded">ollama serve</code></li>
+                    <li>No firewall blocking the port</li>
+                    <li>
+                      Not installed?{' '}
+                      <span className="text-primary">Download from ollama.com</span>
+                    </li>
+                  </ul>
+                </div>
               </div>
             </div>
           )}

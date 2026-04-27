@@ -2,15 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, MessageSquare, Calendar, Plug2, Settings } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Calendar, Bell, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const items = [
-  { href: '/',             icon: LayoutDashboard, label: 'Home'    },
-  { href: '/chat',         icon: MessageSquare, label: 'Chat'     },
-  { href: '/calendar',     icon: Calendar,      label: 'Calendar' },
-  { href: '/integrations', icon: Plug2,         label: 'Connect'  },
-  { href: '/settings',     icon: Settings,      label: 'Settings' },
+  { href: '/',            icon: LayoutDashboard, label: 'Home'      },
+  { href: '/chat',        icon: MessageSquare,   label: 'Chat'      },
+  { href: '/calendar',    icon: Calendar,        label: 'Calendar'  },
+  { href: '/reminders',   icon: Bell,            label: 'Reminders' },
+  { href: '/settings',    icon: Settings,        label: 'Settings'  },
 ]
 
 export function MobileNav() {

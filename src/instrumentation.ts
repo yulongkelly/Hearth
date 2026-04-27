@@ -9,5 +9,8 @@ export async function register() {
     const email = new EmailAdapter()
     register(email)
     await email.tryAutoConnect()
+
+    const { startReminderScheduler } = await import('./lib/reminder-scheduler')
+    startReminderScheduler()
   }
 }

@@ -6,6 +6,7 @@ export interface EmailMessage {
   date: string
   accountEmail: string
   accountLabel: string
+  webLink?: string
 }
 
 export interface EmailAdapter {
@@ -19,7 +20,16 @@ export interface EmailAdapter {
 
 export function formatEmailMessages(msgs: EmailMessage[]): string {
   if (!msgs.length) return 'No messages found.'
-  return msgs.map(m =>
-    `Account: ${m.accountLabel}\nID: ${m.id}\nFrom: ${m.from}\nSubject: ${m.subject}\nDate: ${m.date}\nSnippet: ${m.snippet}`
-  ).join('\n\n---\n\n')
+  return msgs.map(m => {
+    const lines = [
+      `Account: ${m.accountLabel}`,
+      `ID: ${m.id}`,
+      ...(m.webLink ? [`Link: ${m.webLink}`] : []),
+      `From: ${m.from}`,
+      `Subject: ${m.subject}`,
+      `Date: ${m.date}`,
+      `Snippet: ${m.snippet}`,
+    ]
+    return lines.join('\n')
+  }).join('\n\n---\n\n')
 }

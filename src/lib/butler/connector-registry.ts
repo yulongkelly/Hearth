@@ -7,9 +7,16 @@ export interface ConnectorAction {
 
 export const CONNECTOR_REGISTRY: Record<string, Record<string, ConnectorAction>> = {
   email: {
-    search: { safety_level: 'low',  toolName: 'email_search' },
-    get:    { safety_level: 'low',  toolName: 'email_get' },
-    send:   { safety_level: 'high', toolName: 'email_send' },
+    search:        { safety_level: 'low',  toolName: 'email_search' },
+    get:           { safety_level: 'low',  toolName: 'email_get' },
+    send:          { safety_level: 'high', toolName: 'email_send' },
+    list_accounts: { safety_level: 'low',  toolName: 'email_list_accounts' },
+  },
+  // Alias: ReAct LLM sometimes emits tool:"gmail" — map to the same executors as email
+  gmail: {
+    get_inbox:  { safety_level: 'low',  toolName: 'email_search' },
+    read_email: { safety_level: 'low',  toolName: 'email_get' },
+    send_email: { safety_level: 'high', toolName: 'email_send' },
   },
   calendar: {
     get_events:   { safety_level: 'low',    toolName: 'get_calendar_events' },
@@ -48,6 +55,15 @@ export const CONNECTOR_REGISTRY: Record<string, Record<string, ConnectorAction>>
     parse_receipt:        { safety_level: 'low', toolName: 'content_parse_receipt' },
     parse_travel:         { safety_level: 'low', toolName: 'content_parse_travel' },
     parse_email_to_event: { safety_level: 'low', toolName: 'content_parse_email_to_event' },
+  },
+  chat: {
+    ask_clarification: { safety_level: 'low', toolName: 'chat_ask_clarification' },
+  },
+  reminders: {
+    create:   { safety_level: 'low',    toolName: 'create_reminder'   },
+    list:     { safety_level: 'low',    toolName: 'list_reminders'    },
+    complete: { safety_level: 'low',    toolName: 'complete_reminder' },
+    delete:   { safety_level: 'medium', toolName: 'delete_reminder'   },
   },
   // Pass-through for external services whose capability is resolved at runtime
   unknown: {

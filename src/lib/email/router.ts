@@ -29,11 +29,17 @@ function buildAdapters(): EmailAdapter[] {
 
 function matchAdapters(adapters: EmailAdapter[], hint: string): EmailAdapter[] {
   const lower = hint.toLowerCase()
-  return adapters.filter(a =>
-    a.accountEmail.toLowerCase().includes(lower) ||
-    a.accountLabel.toLowerCase().includes(lower) ||
-    a.providerType === lower
-  )
+  return adapters.filter(a => {
+    const email = a.accountEmail.toLowerCase()
+    const label = a.accountLabel.toLowerCase()
+    if (email.includes(lower) || lower.includes(email)) return true
+    if (label.includes(lower) || lower.includes(label)) return true
+    if (a.providerType === lower) return true
+    // Allow matching by email domain keyword: "qq" matches *@qq.com, "icloud" matches *@icloud.com
+    const domain = a.accountEmail.split('@')[1]?.toLowerCase() ?? ''
+    if (domain.includes(lower)) return true
+    return false
+  })
 }
 
 export class EmailRouter {

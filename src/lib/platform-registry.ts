@@ -11,8 +11,11 @@ function registry(): Map<PlatformName, BasePlatformAdapter> {
 
 async function ensureRegistered(): Promise<void> {
   if (registry().size > 0) return
-  const { EmailAdapter } = await import('./adapters/email-adapter')
-  registry().set('email', new EmailAdapter())
+  const { EmailAdapter }        = await import('./adapters/email-adapter')
+  const { ImapPlatformAdapter } = await import('./adapters/imap-platform-adapter')
+  registry().set('email',        new EmailAdapter())
+  registry().set('outlook-imap', new ImapPlatformAdapter('outlook-imap', 'outlook-imap-config.json'))
+  registry().set('qq-imap',      new ImapPlatformAdapter('qq-imap',      'qq-imap-config.json'))
 }
 
 export function register(adapter: BasePlatformAdapter): void {

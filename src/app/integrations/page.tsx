@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { Plug2, Mail } from 'lucide-react'
 import { GmailCard } from '@/components/integrations/gmail-card'
 import { OutlookCard } from '@/components/integrations/outlook-card'
+import { QQMailCard } from '@/components/integrations/qq-mail-card'
 import { CalendarCard } from '@/components/integrations/calendar-card'
 import { PlatformCard } from '@/components/integrations/platform-card'
 import { MyConnectionsSection } from '@/components/integrations/my-connections-section'
@@ -26,13 +27,14 @@ function IntegrationsContent() {
         </p>
 
         <GmailCard initialError={oauthError} />
-        <OutlookCard initialError={oauthError} />
+        <OutlookCard />
+        <QQMailCard />
         <CalendarCard initialError={oauthError} />
 
         <PlatformCard
           platform="email"
           label="Email"
-          description="Read and send email via IMAP/SMTP (Gmail, Outlook, Yahoo…)"
+          description="Read and send email via IMAP/SMTP (Yahoo, iCloud, or any other provider)"
           icon={Mail}
           iconBg="bg-orange-500/10"
           iconColor="text-orange-500"
